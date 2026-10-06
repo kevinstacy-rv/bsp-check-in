@@ -32,12 +32,21 @@ type Persisted = {
   printer: PrinterSettings;
   /** When staff confirmed a test badge printed on this computer. */
   printerVerifiedAt: string | null;
+  /** Identifies the current event in shared storage (past events). */
+  eventId: string | null;
+  eventStartedAt: string | null;
+  eventSavedAt: string | null;
+  /** Secret in the phone preview link. */
+  previewKey: string | null;
 };
 
 type Runtime = {
   online: boolean;
   syncing: boolean;
   syncError: string | null;
+  /** Last time the paired phone polled for the preview (ms epoch). */
+  phoneSeenAt: number | null;
+  previewError: string | null;
 };
 
 export type State = Persisted & Runtime;
@@ -53,9 +62,15 @@ const initial: State = {
   failed: [],
   printer: DEFAULT_PRINTER,
   printerVerifiedAt: null,
+  eventId: null,
+  eventStartedAt: null,
+  eventSavedAt: null,
+  previewKey: null,
   online: true,
   syncing: false,
   syncError: null,
+  phoneSeenAt: null,
+  previewError: null,
 };
 
 let state: State = initial;
@@ -90,7 +105,7 @@ function load() {
 }
 
 function persist() {
-  const { online: _o, syncing: _s, syncError: _e, ...rest } = state;
+  const { online: _o, syncing: _s, syncError: _e, phoneSeenAt: _p, previewError: _pe, ...rest } = state;
   try {
     localStorage.setItem(KEY, JSON.stringify(rest));
   } catch {
@@ -217,13 +232,44 @@ export function importRoster(fetched: Attendee[]) {
     const pending = new Set(s.outbox.flatMap((o) => (o.kind === "walkin" ? [] : [o.contactId])));
     const local = new Map(s.roster.map((a) => [a.id, a]));
     const ids = new Set(fetched.map((a) => a.id));
-    const merged = fetched.map((a) =>
-      pending.has(a.id) ? { ...a, checkedInAt: local.get(a.id)?.checkedInAt ?? null } : a,
-    );
+    const merged = fetched.map((a) => {
+      const mine = local.get(a.id);
+      // Badge corrections live only on this station, so carry them across.
+      const badge = mine ? { badgeName: mine.badgeName, badgeCompany: mine.badgeCompany } : {};
+      const withBadge = { ...a, ...Object.fromEntries(Object.entries(badge).filter(([, v]) => v !== undefined)) };
+      return pending.has(a.id) ? { ...withBadge, checkedInAt: mine?.checkedInAt ?? null } : withBadge;
+    });
     // Walk-ins may not be in the segment (active segments can't be added to), so keep them.
     const walkIns = s.roster.filter((a) => a.walkIn && !ids.has(a.id));
     return { roster: [...merged, ...walkIns], importedAt: new Date().toISOString() };
   });
+}
+
+/** Starts a new event record the first time attendees are imported. */
+export function ensureEvent() {
+  const s = getState();
+  if (s.eventId) return s.eventId;
+  const eventId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  setState({ eventId, eventStartedAt: new Date().toISOString(), eventSavedAt: null });
+  return eventId;
+}
+
+/** Badge-only correction. Passing the HubSpot value (or blank name) clears the override. */
+export function setBadge(id: string, badge: { name: string; company: string }) {
+  setState((s) => ({
+    roster: s.roster.map((a) => {
+      if (a.id !== id) return a;
+      const { badgeName: _n, badgeCompany: _c, ...rest } = a;
+      const name = badge.name.trim();
+      const company = badge.company.trim();
+      const original = [a.firstName, a.lastName].filter(Boolean).join(" ").trim();
+      return {
+        ...rest,
+        ...(name && name !== original ? { badgeName: name } : {}),
+        ...(company !== a.company.trim() ? { badgeCompany: company } : {}),
+      };
+    }),
+  }));
 }
 
 export function updatePrinter(patch: Partial<PrinterSettings>) {

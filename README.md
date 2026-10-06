@@ -14,8 +14,12 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
   - `event_check_in_at`, the check-in time
 
   Both are created automatically the first time you import. You can rename them with environment variables (see below).
-- **Offline**: the roster and every check-in are saved in the browser. While Wi-Fi is down, check-ins queue and printing keeps working, because the printer is local. The queue syncs to HubSpot when the connection returns. The header shows sync and printer status.
+- **Offline**: the roster and every check-in are saved in the browser. While Wi-Fi is down, check-ins queue and printing keeps working, because the printer is local. The queue syncs to HubSpot when the connection returns. The header shows sync status.
 - **Badge**: drawn on a canvas at 300 dpi in Plus Jakarta Sans with the ProPresenter lockup, then printed through the Mac's Brother driver on a page sized exactly to the label roll. With Chrome's kiosk printing turned on, it prints without a dialog. Long names shrink to fit, then wrap to two lines.
+- **Printer check**: browsers can't see installed drivers, so Setup confirms the printer by printing a test badge and asking whether it came out. Until someone says yes, Setup shows the QL-800 driver download and steps, and the check-in screen shows a reminder.
+- **Badge corrections**: **Edit badge** fixes the name or organization on one person's badge for this event. HubSpot keeps the original; the change is noted in the event record.
+- **Phone preview**: **Phone preview** in the header shows a QR code. Scan it with a phone or tablet facing attendees. Whoever is selected at the desk (or being typed in as a walk-in, or being corrected) appears on it, so they can check their name and organization before staff press Print. The phone doesn't sign in; the random key in the link is its only access, and **New link** revokes old ones.
+- **Past events**: the event saves to shared storage automatically while you work. **Past events** lists every event with attendance, walk-ins and corrections, and each event shows its attendee list and downloads as CSV. **Finish event** on Setup saves the final record and clears the station.
 
 ## Deploy to Vercel
 
@@ -29,12 +33,19 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
    | `SESSION_SECRET` | Long random string (`openssl rand -base64 32`) |
    | `HUBSPOT_CHECKIN_EVENT_PROPERTY` | Optional. Defaults to `event_check_in_name` |
    | `HUBSPOT_CHECKIN_TIME_PROPERTY` | Optional. Defaults to `event_check_in_at` |
+   | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Set automatically when you add Upstash (below). `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work |
 
 3. The HubSpot private app needs these scopes:
    - `crm.lists.read` and `crm.lists.write`
    - `crm.objects.contacts.read` and `crm.objects.contacts.write`
    - `crm.objects.companies.read`
    - `crm.schemas.contacts.read` and `crm.schemas.contacts.write` (to create the two properties)
+
+### Shared storage (past events and phone preview)
+
+In Vercel, open the project → **Storage** → **Create** → **Upstash for Redis** (the free plan is plenty), and connect it to this project. That adds the storage environment variables. Redeploy afterwards.
+
+Without it, check-in and printing still work; Past events and Phone preview explain that storage isn't set up.
 
 ## Setting up the check-in Mac
 
@@ -64,7 +75,7 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
 cp .env.example .env.local   # fill in the values
 npm install
 npm run dev                  # http://localhost:3000
-npm test                     # unit tests (search, HubSpot client, offline queue)
+npm test                     # unit tests (search, HubSpot client, offline queue, events)
 npm run typecheck
 ```
 
@@ -79,7 +90,11 @@ src/
     page.tsx             Check-in screen
     setup/page.tsx       Event, segment import, printer and badge preview
     login/page.tsx
+    events/…             Past events list and detail
+    preview/page.tsx     Attendee-facing phone preview (no sign-in; keyed link)
     api/hubspot/…        Segment search/import, check-in, walk-ins (server-only token)
+    api/events/…         Saved events (shared storage)
+    api/preview/…        Phone preview relay (shared storage)
   components/            UI
   lib/
     hubspot.ts           HubSpot API client (server)
@@ -87,6 +102,9 @@ src/
     sync.ts              Delivers the outbox to HubSpot
     label.ts             Badge layout → black-and-white image at label size
     print.ts             Prints the badge through the system printer driver
+    events.ts            Autosaves the current event to shared storage
+    preview.ts           Sends the selected badge to the paired phone
+    storage.ts           Upstash Redis client (server)
 public/
   brand/                 Logos from the Renewed Vision design system
   sw.js                  Offline caching

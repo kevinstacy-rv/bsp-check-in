@@ -17,6 +17,8 @@ export const config = {
   matcher: [
     // Everything except the login flow, Next internals and public static files
     // (brand art, the service worker and the manifest load before sign-in).
-    "/((?!login|api/login|_next/static|_next/image|brand/|sw\\.js|manifest\\.webmanifest|icon\\.svg|favicon\\.ico).*)",
+    // The phone preview page and its read endpoint are opened by an unsigned-in phone;
+    // the random key in the link is what grants access.
+    "/((?!login|api/login|preview|api/preview/|_next/static|_next/image|brand/|sw\\.js|manifest\\.webmanifest|icon\\.svg|favicon\\.ico).*)",
   ],
 };

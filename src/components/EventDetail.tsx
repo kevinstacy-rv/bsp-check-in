@@ -1,0 +1,220 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { searchAttendees } from "@/lib/search";
+import { startSync } from "@/lib/sync";
+import { badgeContent, fullName, isCorrected, summarizeEvent, type Attendee, type EventRecord } from "@/lib/types";
+import { TopBar } from "./TopBar";
+
+type Filter = "all" | "in" | "no-show" | "walk-in" | "corrected";
+
+const dateTime = (iso: string) =>
+  new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+function csvCell(v: string) {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function toCsv(event: EventRecord): string {
+  const header = [
+    "First name",
+    "Last name",
+    "Organization",
+    "Email",
+    "Checked in",
+    "Walk-in",
+    "Badge name",
+    "Badge organization",
+    "HubSpot contact ID",
+  ];
+  const rows = event.attendees.map((a) => {
+    const badge = badgeContent(a);
+    return [
+      a.firstName,
+      a.lastName,
+      a.company,
+      a.email,
+      a.checkedInAt ? new Date(a.checkedInAt).toISOString() : "",
+      a.walkIn ? "yes" : "",
+      isCorrected(a) ? badge.name : "",
+      isCorrected(a) ? badge.company : "",
+      a.id.startsWith("tmp_") ? "" : a.id,
+    ];
+  });
+  return [header, ...rows].map((r) => r.map((c) => csvCell(c ?? "")).join(",")).join("\n");
+}
+
+export function EventDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const [event, setEvent] = useState<EventRecord | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
+
+  useEffect(() => {
+    startSync();
+    fetch(`/api/events/${encodeURIComponent(id)}`)
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error ?? `Couldn't load this event (${res.status})`);
+        setEvent(data.event);
+      })
+      .catch((e) => setError(e.message));
+  }, [id]);
+
+  const summary = useMemo(() => (event ? summarizeEvent(event) : null), [event]);
+  const rows = useMemo(() => {
+    if (!event) return [];
+    const found = searchAttendees(event.attendees, query);
+    const keep: Record<Filter, (a: Attendee) => boolean> = {
+      all: () => true,
+      in: (a) => Boolean(a.checkedInAt),
+      "no-show": (a) => !a.checkedInAt,
+      "walk-in": (a) => Boolean(a.walkIn),
+      corrected: isCorrected,
+    };
+    return found.filter(keep[filter]);
+  }, [event, query, filter]);
+
+  function download() {
+    if (!event) return;
+    const blob = new Blob([toCsv(event)], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${event.name.replace(/[^\w\- ]+/g, "").trim() || "event"} check-ins.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  async function remove() {
+    if (!event || !confirm(`Delete "${event.name}" from Past events? This can't be undone. HubSpot isn't changed.`)) return;
+    const res = await fetch(`/api/events/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (res.ok) router.replace("/events");
+    else setError((await res.json().catch(() => null))?.error ?? "Couldn't delete the event.");
+  }
+
+  return (
+    <div className="shell">
+      <TopBar active="events" />
+      <main className="main">
+        <Link href="/events" className="rv-btn rv-btn--ghost rv-btn--sm" style={{ marginLeft: -10, marginBottom: 12 }}>
+          ← Past events
+        </Link>
+
+        {error && <div className="banner banner--bad">{error}</div>}
+
+        {event && summary && (
+          <>
+            <div className="stats">
+              <div>
+                <div className="eyebrow subtle" style={{ marginBottom: 6 }}>
+                  {dateTime(event.startedAt)}
+                  {event.segment ? ` · ${event.segment.name}` : ""}
+                </div>
+                <h1 className="h3">{event.name}</h1>
+                <div className="tiny subtle" style={{ marginTop: 4 }}>
+                  {event.finishedAt ? `Finished ${dateTime(event.finishedAt)}` : `Last saved ${dateTime(event.updatedAt)}`}
+                </div>
+              </div>
+              <div className="row-inline">
+                <button className="rv-btn rv-btn--primary" onClick={download}>
+                  Download CSV
+                </button>
+                <button className="rv-btn rv-btn--ghost" onClick={remove}>
+                  Delete
+                </button>
+              </div>
+            </div>
+
+            <div className="kpis">
+              <div className="kpi">
+                <span className="eyebrow subtle">Checked in</span>
+                <span className="h3">
+                  {summary.checkedIn}
+                  <span className="subtle h5"> of {summary.total}</span>
+                </span>
+              </div>
+              <div className="kpi">
+                <span className="eyebrow subtle">Attendance</span>
+                <span className="h3">{summary.total ? Math.round((summary.checkedIn / summary.total) * 100) : 0}%</span>
+              </div>
+              <div className="kpi">
+                <span className="eyebrow subtle">Walk-ins</span>
+                <span className="h3">{summary.walkIns}</span>
+              </div>
+              <div className="kpi">
+                <span className="eyebrow subtle">Badge corrections</span>
+                <span className="h3">{summary.corrections}</span>
+              </div>
+            </div>
+
+            <div className="searchbar" style={{ marginTop: "var(--space-lg)" }}>
+              <input
+                className="input"
+                type="search"
+                placeholder="Search attendees"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <div className="filters" role="group" aria-label="Filter">
+              {(
+                [
+                  ["all", "Everyone"],
+                  ["in", "Checked in"],
+                  ["no-show", "Didn't check in"],
+                  ["walk-in", "Walk-ins"],
+                  ["corrected", "Corrected badges"],
+                ] as const
+              ).map(([key, label]) => (
+                <button key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <ul className="list">
+              {rows.map((a) => {
+                const badge = badgeContent(a);
+                return (
+                  <li key={a.id} className="row" style={{ cursor: "default" }}>
+                    <div>
+                      <div className="row__name">{fullName(a) || a.email || "No name"}</div>
+                      <div className="row__meta">
+                        {a.company && <span>{a.company}</span>}
+                        {a.walkIn && <span className="tag">Walk-in</span>}
+                        {isCorrected(a) && (
+                          <span className="tag tag--accent">
+                            Badge: {badge.name}
+                            {badge.company ? ` · ${badge.company}` : ""}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="row__actions">
+                      {a.checkedInAt ? (
+                        <span className="badge">✓ {time(a.checkedInAt)}</span>
+                      ) : (
+                        <span className="tiny subtle">Didn&apos;t check in</span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+              {rows.length === 0 && <li className="empty">No attendees match.</li>}
+            </ul>
+          </>
+        )}
+
+        {!event && !error && (
+          <div className="empty">
+            <span className="spinner" style={{ display: "inline-block" }} />
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

@@ -52,3 +52,23 @@ describe("offline queue", () => {
     expect(roster[3].walkIn).toBe(true);
   });
 });
+
+describe("badge corrections", () => {
+  it("stores only what differs from HubSpot and survives a re-import", async () => {
+    const s = await fresh();
+    s.setState({ roster: [{ ...person("1"), firstName: "Kevin", lastName: "Stacy", company: "Renewed Vision" }] });
+    s.setBadge("1", { name: "Kev Stacy", company: "Renewed Vision" });
+    let a = s.getState().roster[0];
+    expect(a.badgeName).toBe("Kev Stacy");
+    expect(a.badgeCompany).toBeUndefined();
+
+    s.importRoster([{ ...person("1"), firstName: "Kevin", lastName: "Stacy", company: "Renewed Vision" }]);
+    a = s.getState().roster[0];
+    expect(a.badgeName).toBe("Kev Stacy");
+
+    // Typing the HubSpot values back clears the correction.
+    s.setBadge("1", { name: "Kevin Stacy", company: "Renewed Vision" });
+    a = s.getState().roster[0];
+    expect(a.badgeName).toBeUndefined();
+  });
+});

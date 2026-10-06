@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { printLabel } from "@/lib/print";
 import { normalize, queryTokens, searchAttendees } from "@/lib/search";
-import { addWalkIn, checkIn, dismissFailed, undoCheckIn, useStore } from "@/lib/store";
+import { showOnPhone } from "@/lib/preview";
+import { addWalkIn, checkIn, dismissFailed, setBadge, undoCheckIn, useStore } from "@/lib/store";
 import { startSync, syncNow } from "@/lib/sync";
-import { fullName, type Attendee, type WalkInInput } from "@/lib/types";
+import { badgeContent, fullName, isCorrected, type Attendee, type WalkInInput } from "@/lib/types";
+import { BadgeDialog } from "./BadgeDialog";
 import { Toasts, useToasts } from "./Toasts";
 import { TopBar } from "./TopBar";
 import { WalkInDialog } from "./WalkInDialog";
@@ -55,6 +57,11 @@ export function CheckInApp() {
   const [selected, setSelected] = useState(0);
   const [printing, setPrinting] = useState<Set<string>>(new Set());
   const [walkInOpen, setWalkInOpen] = useState(false);
+  const [editing, setEditing] = useState<Attendee | null>(null);
+  // A row clicked with an empty search still goes to the phone.
+  const [pinned, setPinned] = useState(false);
+  const [walkInDraft, setWalkInDraft] = useState<WalkInInput | null>(null);
+  const [badgeDraft, setBadgeDraft] = useState<{ name: string; company: string } | null>(null);
   const { toasts, push, dismiss } = useToasts();
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -73,7 +80,21 @@ export function CheckInApp() {
 
   const checkedIn = useMemo(() => roster.filter((a) => a.checkedInAt).length, [roster]);
 
-  useEffect(() => setSelected(0), [deferredQuery, filter]);
+  useEffect(() => {
+    setSelected(0);
+    setPinned(false);
+  }, [deferredQuery, filter]);
+
+  // Mirror whatever the attendee should check onto the paired phone.
+  const current = results[selected];
+  useEffect(() => {
+    if (badgeDraft) return showOnPhone(badgeDraft);
+    if (walkInDraft) {
+      const name = [walkInDraft.firstName, walkInDraft.lastName].map((x) => x.trim()).filter(Boolean).join(" ");
+      return showOnPhone(name ? { name, company: walkInDraft.company.trim() } : null);
+    }
+    showOnPhone(current && (deferredQuery.trim() || pinned) ? badgeContent(current) : null);
+  }, [badgeDraft, walkInDraft, current, deferredQuery, pinned]);
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [selected]);
@@ -87,6 +108,7 @@ export function CheckInApp() {
     async (attendee: Attendee, { reprint = false } = {}) => {
       if (printing.has(attendee.id)) return;
       const name = fullName(attendee);
+      const badge = badgeContent(attendee);
       // Check in first, so a printer problem never loses the check-in.
       const wasIn = Boolean(attendee.checkedInAt);
       if (!wasIn) {
@@ -95,8 +117,9 @@ export function CheckInApp() {
       }
       setPrinting((p) => new Set(p).add(attendee.id));
       resetSearch();
+      showOnPhone(badge, "printing");
       try {
-        await printLabel({ name, company: attendee.company });
+        await printLabel(badge);
         push({ tone: "ok", message: reprint || wasIn ? `Sent ${name}'s badge to the printer` : `${name} is checked in` });
       } catch (e) {
         push({
@@ -121,6 +144,17 @@ export function CheckInApp() {
     push({ tone: "ok", message: `Undid ${fullName(a)}'s check-in` });
   };
 
+  const saveBadge = (badge: { name: string; company: string }, andPrint: boolean) => {
+    if (!editing) return;
+    const id = editing.id;
+    setBadge(id, badge);
+    setEditing(null);
+    setBadgeDraft(null);
+    const updated = { ...editing, badgeName: badge.name, badgeCompany: badge.company };
+    if (andPrint) void print(updated, { reprint: Boolean(editing.checkedInAt) });
+    else push({ tone: "ok", message: "Badge updated" });
+  };
+
   const submitWalkIn = (input: WalkInInput) => {
     setWalkInOpen(false);
     const attendee = addWalkIn(input);
@@ -132,7 +166,7 @@ export function CheckInApp() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (walkInOpen || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (walkInOpen || editing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (target.closest("input, textarea, select, dialog")) return;
       if (e.key === "/" || e.key.length === 1) {
         searchRef.current?.focus();
@@ -141,7 +175,7 @@ export function CheckInApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [walkInOpen]);
+  }, [walkInOpen, editing]);
 
   const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
@@ -273,7 +307,10 @@ export function CheckInApp() {
                     className="row"
                     role="option"
                     aria-selected={i === selected}
-                    onClick={() => setSelected(i)}
+                    onClick={() => {
+                      setSelected(i);
+                      setPinned(true);
+                    }}
                   >
                     <div>
                       <div className="row__name">
@@ -286,6 +323,12 @@ export function CheckInApp() {
                           </span>
                         )}
                         {a.walkIn && <span className="tag">Walk-in</span>}
+                        {isCorrected(a) && (
+                          <span className="tag tag--accent" title="Badge-only correction">
+                            Badge: {badgeContent(a).name}
+                            {badgeContent(a).company ? ` · ${badgeContent(a).company}` : ""}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="row__actions">
@@ -303,6 +346,16 @@ export function CheckInApp() {
                           </button>
                         </>
                       )}
+                      <button
+                        className="rv-btn rv-btn--ghost rv-btn--sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelected(i);
+                          setEditing(a);
+                        }}
+                      >
+                        Edit badge
+                      </button>
                       <button
                         className={`rv-btn ${a.checkedInAt ? "rv-btn--outline" : "rv-btn--primary"}`}
                         disabled={busy}
@@ -342,6 +395,17 @@ export function CheckInApp() {
           searchRef.current?.focus();
         }}
         onSubmit={submitWalkIn}
+        onDraft={setWalkInDraft}
+      />
+      <BadgeDialog
+        attendee={editing}
+        onClose={() => {
+          setEditing(null);
+          setBadgeDraft(null);
+          searchRef.current?.focus();
+        }}
+        onSave={saveBadge}
+        onDraft={setBadgeDraft}
       />
       <Toasts toasts={toasts} dismiss={dismiss} />
     </div>

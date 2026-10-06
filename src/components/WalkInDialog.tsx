@@ -10,11 +10,14 @@ export function WalkInDialog({
   initialName,
   onClose,
   onSubmit,
+  onDraft,
 }: {
   open: boolean;
   initialName: string;
   onClose: () => void;
   onSubmit: (input: WalkInInput) => void;
+  /** Called as staff type, so the attendee can check spelling on the paired phone. */
+  onDraft?: (input: WalkInInput | null) => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [form, setForm] = useState<WalkInInput>(blank);
@@ -31,6 +34,10 @@ export function WalkInDialog({
       dialog.close();
     }
   }, [open, initialName]);
+
+  useEffect(() => {
+    onDraft?.(open ? form : null);
+  }, [open, form, onDraft]);
 
   const set = (key: keyof WalkInInput) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));

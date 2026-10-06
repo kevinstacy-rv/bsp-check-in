@@ -1,5 +1,6 @@
 "use client";
 
+import { startEventAutosave } from "./events";
 import { getState, resolveWalkIn, setState, type Op } from "./store";
 
 class Permanent extends Error {}
@@ -84,6 +85,7 @@ export function startSync() {
     setState({ online: navigator.onLine });
     if (navigator.onLine) void syncNow();
   };
+  startEventAutosave();
   window.addEventListener("online", update);
   window.addEventListener("offline", update);
   setInterval(() => {

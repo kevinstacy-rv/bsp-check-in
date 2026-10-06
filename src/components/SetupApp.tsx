@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getState, importRoster, setState, updatePrinter, useStore } from "@/lib/store";
+import { saveEvent as saveEventRecord } from "@/lib/events";
+import { ensureEvent, getState, importRoster, setState, updatePrinter, useStore } from "@/lib/store";
 import { startSync } from "@/lib/sync";
 import { LABEL_SIZES, labelSizeMm, type Attendee, type LabelSizeId, type Segment } from "@/lib/types";
 import { LabelPreview } from "./LabelPreview";
@@ -34,6 +35,8 @@ export function SetupApp() {
   const [picked, setPicked] = useState<Segment | null>(null);
   const [loadingSegments, setLoadingSegments] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const eventSavedAt = useStore((s) => s.eventSavedAt);
   const [sample, setSample] = useState({ name: "Kevin Stacy", company: "Renewed Vision" });
 
   useEffect(() => {
@@ -78,6 +81,8 @@ export function SetupApp() {
         `/api/hubspot/segments/${encodeURIComponent(target.id)}?event=${encodeURIComponent(name)}`,
       );
       importRoster(attendees);
+      ensureEvent();
+      void saveEventRecord();
       push({ tone: "ok", message: `Imported ${attendees.length} attendees from ${target.name}` });
     } catch (e) {
       push({ tone: "bad", message: `Import didn't finish. ${(e as Error).message}` });
@@ -86,15 +91,43 @@ export function SetupApp() {
     }
   }
 
-  function resetStation() {
-    if (outbox.length) {
-      push({ tone: "bad", message: `${outbox.length} changes haven't synced yet. Get back online before clearing.` });
-      return;
-    }
-    if (!confirm("Clear the event and attendee list from this computer? Printer settings stay. HubSpot isn't changed.")) return;
-    setState({ eventName: "", segment: null, roster: [], importedAt: null, failed: [] });
+  function clearStation() {
+    setState({
+      eventName: "",
+      segment: null,
+      roster: [],
+      importedAt: null,
+      failed: [],
+      eventId: null,
+      eventStartedAt: null,
+      eventSavedAt: null,
+    });
     setEventDraft("");
     setPicked(null);
+  }
+
+  async function finishEvent() {
+    if (outbox.length) {
+      push({ tone: "bad", message: `${outbox.length} changes haven't reached HubSpot yet. Get back online before finishing.` });
+      return;
+    }
+    if (!confirm("Finish this event? It's saved to Past events, then cleared from this computer. HubSpot isn't changed."))
+      return;
+    setFinishing(true);
+    const result = await saveEventRecord({ finished: true });
+    setFinishing(false);
+    if (result.ok) {
+      clearStation();
+      push({ tone: "ok", message: "Event saved to Past events" });
+      return;
+    }
+    if (
+      confirm(
+        `The event couldn't be saved to Past events: ${result.error}\n\nClear it from this computer anyway? The check-ins are still in HubSpot.`,
+      )
+    ) {
+      clearStation();
+    }
   }
 
 
@@ -304,11 +337,14 @@ export function SetupApp() {
                 <span>This computer</span>
               </h2>
               <p className="tiny subtle" style={{ margin: 0 }}>
-                After the event, clear the attendee list from this computer. Nothing in HubSpot changes.
+                The event saves to Past events automatically while you work
+                {eventSavedAt ? <> (last saved {when(eventSavedAt)})</> : null}. When it&apos;s over, finish it to save the
+                final record and clear the attendee list from this computer. Nothing in HubSpot changes.
               </p>
               <div>
-                <button className="rv-btn rv-btn--secondary" onClick={resetStation}>
-                  Clear event from this computer
+                <button className="rv-btn rv-btn--secondary" onClick={finishEvent} disabled={finishing || !roster.length}>
+                  {finishing && <span className="spinner" />}
+                  Finish event
                 </button>
               </div>
             </section>

@@ -1,6 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { HubSpotError } from "./hubspot";
+import { StorageMissing } from "./storage";
 
 /** Wraps a route handler so HubSpot and validation errors come back as JSON with a usable status. */
 export function handle<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
@@ -13,6 +14,7 @@ export function handle<A extends unknown[]>(fn: (...args: A) => Promise<Response
         return NextResponse.json({ error: `HubSpot: ${e.message}` }, { status });
       }
       if (e instanceof BadRequest) return NextResponse.json({ error: e.message }, { status: 400 });
+      if (e instanceof StorageMissing) return NextResponse.json({ error: e.message, storage: false }, { status: 503 });
       console.error(e);
       return NextResponse.json({ error: "Something went wrong on the server." }, { status: 500 });
     }
