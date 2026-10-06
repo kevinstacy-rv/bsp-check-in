@@ -1,54 +1,65 @@
 "use client";
 
-import { renderLabel, toZpl, LABEL_HEIGHT_IN, LABEL_WIDTH_IN, type LabelContent } from "./label";
-import { getState, setState } from "./store";
+// Prints the badge through the operating system's printer driver (the Brother
+// QL-800 on the check-in Mac). The page is sized exactly to the label, so the
+// driver picks the matching DK paper size.
+//
+// Launch Chrome with --kiosk-printing and print() goes straight to the default
+// printer with no dialog; without it, staff see the normal print dialog.
+
+import { renderLabel, type LabelContent } from "./label";
+import { getState } from "./store";
 import type { PrinterSettings } from "./types";
-import { BrowserPrintError, resolvePrinter, sendZpl } from "./zebra";
 
-export async function checkPrinter() {
-  const { printer } = getState();
-  try {
-    const device = await resolvePrinter(printer.printerUid);
-    setState({ printerStatus: device ? { state: "ready", name: device.name } : { state: "missing" } });
-    return device;
-  } catch (e) {
-    setState({ printerStatus: { state: "unreachable", message: (e as Error).message } });
-    return null;
-  }
-}
+let queue: Promise<void> = Promise.resolve();
 
-export async function printLabel(content: LabelContent, settings: PrinterSettings = getState().printer) {
-  const device = await resolvePrinter(settings.printerUid).catch((e) => {
-    setState({ printerStatus: { state: "unreachable", message: (e as Error).message } });
-    throw e;
-  });
-  if (!device) {
-    setState({ printerStatus: { state: "missing" } });
-    throw new BrowserPrintError("No Zebra printer found. Plug it in and set it as the default in Browser Print.");
-  }
+async function printOnce(content: LabelContent, settings: PrinterSettings) {
   const label = await renderLabel(content, settings);
-  await sendZpl(device, toZpl(label, settings));
-  setState({ printerStatus: { state: "ready", name: device.name } });
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    label.canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't draw the badge."))), "image/png"),
+  );
+  const src = URL.createObjectURL(blob);
+
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+  document.body.appendChild(frame);
+
+  try {
+    const doc = frame.contentDocument!;
+    const w = `${label.widthMm}mm`;
+    const h = `${label.heightMm}mm`;
+    doc.open();
+    doc.write(`<!doctype html><html><head><title>Badge</title><style>
+      @page { size: ${w} ${h}; margin: 0 }
+      html, body { margin: 0; padding: 0 }
+      img { display: block; width: ${w}; height: ${h} }
+    </style></head><body><img alt=""></body></html>`);
+    doc.close();
+
+    const img = doc.querySelector("img")!;
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Couldn't load the badge image."));
+      img.src = src;
+    });
+
+    const win = frame.contentWindow!;
+    win.focus();
+    // Blocks while a dialog is open; returns at once under --kiosk-printing.
+    win.print();
+  } finally {
+    // Give the spooler a moment before tearing the frame down.
+    setTimeout(() => {
+      frame.remove();
+      URL.revokeObjectURL(src);
+    }, 2000);
+  }
 }
 
-/** Fallback for testing without Browser Print: the system print dialog at label size. */
-export async function printWithDialog(content: LabelContent, settings: PrinterSettings = getState().printer) {
-  const label = await renderLabel(content, { ...settings, rotate: false, offsetX: 0, offsetY: 0 });
-  const src = label.canvas.toDataURL("image/png");
-  const frame = document.createElement("iframe");
-  frame.style.cssText = "position:fixed;width:0;height:0;border:0;visibility:hidden";
-  document.body.appendChild(frame);
-  const doc = frame.contentDocument!;
-  doc.open();
-  doc.write(`<!doctype html><html><head><style>
-    @page { size: ${LABEL_WIDTH_IN}in ${LABEL_HEIGHT_IN}in; margin: 0 }
-    html, body { margin: 0 }
-    img { width: ${LABEL_WIDTH_IN}in; height: ${LABEL_HEIGHT_IN}in; display: block; image-rendering: pixelated }
-  </style></head><body><img src="${src}"></body></html>`);
-  doc.close();
-  const img = doc.querySelector("img")!;
-  await (img.complete ? Promise.resolve() : new Promise((r) => (img.onload = r)));
-  frame.contentWindow!.focus();
-  frame.contentWindow!.print();
-  setTimeout(() => frame.remove(), 1000);
+/** Prints one badge. Jobs run one after another so two quick presses don't collide. */
+export function printLabel(content: LabelContent, settings: PrinterSettings = getState().printer): Promise<void> {
+  const job = queue.then(() => printOnce(content, settings));
+  queue = job.catch(() => undefined);
+  return job;
 }

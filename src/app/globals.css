@@ -600,7 +600,7 @@ button.pill {
 
 .setup {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-xl);
 }
 .section {
@@ -750,4 +750,17 @@ button.pill {
   .row {
     grid-template-columns: 1fr;
   }
+}
+
+.code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 8px 10px;
+  background: var(--surface);
+  border-radius: var(--radius-swatch);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
 }

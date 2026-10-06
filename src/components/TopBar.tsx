@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { checkPrinter } from "@/lib/print";
 import { useStore } from "@/lib/store";
 import { syncNow } from "@/lib/sync";
 
@@ -13,7 +12,6 @@ export function TopBar({ active }: { active: "checkin" | "setup" }) {
   const outbox = useStore((s) => s.outbox);
   const syncing = useStore((s) => s.syncing);
   const syncError = useStore((s) => s.syncError);
-  const printer = useStore((s) => s.printerStatus);
 
   const pending = outbox.length;
   const syncTone = !online || syncError ? "warn" : pending ? "warn" : "ok";
@@ -24,16 +22,6 @@ export function TopBar({ active }: { active: "checkin" | "setup" }) {
       : pending
         ? `${pending} waiting to sync`
         : "Synced to HubSpot";
-
-  const printerTone = printer.state === "ready" ? "ok" : printer.state === "unknown" ? "" : "bad";
-  const printerLabel =
-    printer.state === "ready"
-      ? printer.name
-      : printer.state === "missing"
-        ? "No printer found"
-        : printer.state === "unreachable"
-          ? "Browser Print not running"
-          : "Checking printer…";
 
   async function signOut() {
     await fetch("/api/logout", { method: "POST" }).catch(() => undefined);
@@ -61,14 +49,6 @@ export function TopBar({ active }: { active: "checkin" | "setup" }) {
         >
           {syncing ? <span className="spinner" style={{ width: 10, height: 10 }} /> : <span className={`dot dot--${syncTone}`} />}
           {syncLabel}
-        </button>
-        <button
-          className="pill"
-          onClick={() => void checkPrinter()}
-          title={printer.state === "unreachable" ? printer.message : "Check printer"}
-        >
-          <span className={`dot ${printerTone ? `dot--${printerTone}` : ""}`} />
-          {printerLabel}
         </button>
       </div>
 

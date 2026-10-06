@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { checkPrinter, printLabel } from "@/lib/print";
+import { printLabel } from "@/lib/print";
 import { normalize, queryTokens, searchAttendees } from "@/lib/search";
 import { addWalkIn, checkIn, dismissFailed, undoCheckIn, useStore } from "@/lib/store";
 import { startSync, syncNow } from "@/lib/sync";
@@ -60,9 +60,6 @@ export function CheckInApp() {
 
   useEffect(() => {
     startSync();
-    void checkPrinter();
-    const t = setInterval(() => void checkPrinter(), 30000);
-    return () => clearInterval(t);
   }, []);
 
   const tokens = useMemo(() => queryTokens(deferredQuery), [deferredQuery]);
@@ -99,7 +96,7 @@ export function CheckInApp() {
       resetSearch();
       try {
         await printLabel({ name, company: attendee.company });
-        push({ tone: "ok", message: reprint || wasIn ? `Reprinted ${name}'s badge` : `${name} is checked in` });
+        push({ tone: "ok", message: reprint || wasIn ? `Sent ${name}'s badge to the printer` : `${name} is checked in` });
       } catch (e) {
         push({
           tone: "bad",

@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { checkPrinter, printLabel, printWithDialog } from "@/lib/print";
+import { printLabel } from "@/lib/print";
 import { getState, importRoster, setState, updatePrinter, useStore } from "@/lib/store";
 import { startSync } from "@/lib/sync";
-import type { Attendee, Segment } from "@/lib/types";
-import { availablePrinters, type ZebraDevice } from "@/lib/zebra";
+import { LABEL_SIZES, labelSizeMm, type Attendee, type LabelSizeId, type Segment } from "@/lib/types";
 import { LabelPreview } from "./LabelPreview";
 import { Toasts, useToasts } from "./Toasts";
 import { TopBar } from "./TopBar";
@@ -27,7 +26,6 @@ export function SetupApp() {
   const importedAt = useStore((s) => s.importedAt);
   const outbox = useStore((s) => s.outbox);
   const printer = useStore((s) => s.printer);
-  const printerStatus = useStore((s) => s.printerStatus);
   const { toasts, push, dismiss } = useToasts();
 
   const [eventDraft, setEventDraft] = useState("");
@@ -36,14 +34,14 @@ export function SetupApp() {
   const [picked, setPicked] = useState<Segment | null>(null);
   const [loadingSegments, setLoadingSegments] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [devices, setDevices] = useState<ZebraDevice[]>([]);
+  const [origin, setOrigin] = useState("https://your-check-in-site");
   const [sample, setSample] = useState({ name: "Kevin Stacy", company: "Renewed Vision" });
 
   useEffect(() => {
     startSync();
     setEventDraft(getState().eventName);
     setPicked(getState().segment);
-    void refreshPrinters();
+    setOrigin(location.origin);
     void findSegments("");
   }, []);
 
@@ -57,11 +55,6 @@ export function SetupApp() {
     } finally {
       setLoadingSegments(false);
     }
-  }
-
-  async function refreshPrinters() {
-    await checkPrinter();
-    setDevices(await availablePrinters().catch(() => []));
   }
 
   function saveEvent() {
@@ -116,6 +109,21 @@ export function SetupApp() {
   }
 
   const previewContent = useMemo(() => ({ ...sample }), [sample]);
+  const size = labelSizeMm(printer);
+  const preset = LABEL_SIZES[printer.label] ?? LABEL_SIZES["dk-1202"];
+  // A separate Chrome profile keeps kiosk printing off your everyday browsing.
+  const launchCommand = `open -na "Google Chrome" --args --kiosk-printing --user-data-dir="$HOME/Library/Application Support/CheckInChrome" ${origin}`;
+  const mmInput = (value: number, onChange: (v: number) => void, min = 10, max = 300) => (
+    <input
+      className="input"
+      type="number"
+      step="1"
+      min={min}
+      max={max}
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value) || 0)}
+    />
+  );
   const checkedIn = roster.filter((a) => a.checkedInAt).length;
 
   return (
@@ -229,104 +237,98 @@ export function SetupApp() {
                 <span>3 · Printer</span>
               </h2>
               <div className="card">
-                <div className="row-inline" style={{ justifyContent: "space-between" }}>
-                  <span className="h5">
-                    {printerStatus.state === "ready"
-                      ? printerStatus.name
-                      : printerStatus.state === "missing"
-                        ? "No printer found"
-                        : printerStatus.state === "unreachable"
-                          ? "Can't reach Browser Print"
-                          : "Looking for the printer…"}
-                  </span>
-                  <button className="rv-btn rv-btn--sm rv-btn--outline" onClick={() => void refreshPrinters()}>
-                    Check again
+                <div className="h5">Brother QL-800 on this Mac</div>
+                <ol className="tiny muted" style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
+                  <li>
+                    Install the QL-800 driver for macOS from{" "}
+                    <a href="https://support.brother.com" target="_blank" rel="noreferrer">
+                      support.brother.com
+                    </a>
+                    , then add the printer in System Settings → Printers &amp; Scanners and make it the default.
+                  </li>
+                  <li>Turn off Editor Lite: hold its button on the printer until the green light goes out.</li>
+                  <li>
+                    Open Terminal and run the command below. It opens this site in its own Chrome window
+                    that prints without asking.
+                  </li>
+                  <li>In that window, sign in and print a test badge.</li>
+                </ol>
+                <div className="row-inline" style={{ marginTop: 8, flexWrap: "nowrap" }}>
+                  <code className="code">{launchCommand}</code>
+                  <button
+                    className="rv-btn rv-btn--sm rv-btn--outline"
+                    onClick={() =>
+                      navigator.clipboard
+                        .writeText(launchCommand)
+                        .then(() => push({ tone: "ok", message: "Command copied" }))
+                        .catch(() => push({ tone: "bad", message: "Couldn't copy. Select the command and copy it." }))
+                    }
+                  >
+                    Copy
                   </button>
                 </div>
-                {printerStatus.state !== "ready" && (
-                  <ol className="tiny muted" style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
-                    <li>Install and open Zebra Browser Print on this computer.</li>
-                    <li>Plug in the Zebra over USB and set it as the default device in Browser Print.</li>
-                    <li>When Browser Print or the browser asks whether this site can connect, choose Allow.</li>
-                  </ol>
-                )}
               </div>
 
-              {devices.length > 1 && (
-                <label className="field">
-                  <span>Printer</span>
-                  <select
-                    className="select"
-                    value={printer.printerUid ?? ""}
-                    onChange={(e) => {
-                      updatePrinter({ printerUid: e.target.value || null });
-                      void checkPrinter();
-                    }}
-                  >
-                    <option value="">Browser Print default</option>
-                    {devices.map((d) => (
-                      <option key={d.uid} value={d.uid}>
-                        {d.name} ({d.connection})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <div className="grid-2">
-                <label className="field">
-                  <span>Resolution</span>
-                  <select
-                    className="select"
-                    value={printer.dpi}
-                    onChange={(e) => updatePrinter({ dpi: Number(e.target.value) as 203 | 300 })}
-                  >
-                    <option value={203}>203 dpi</option>
-                    <option value={300}>300 dpi</option>
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Darkness</span>
-                  <input
-                    className="input"
-                    type="number"
-                    min={-30}
-                    max={30}
-                    value={printer.darkness}
-                    onChange={(e) => updatePrinter({ darkness: Number(e.target.value) || 0 })}
-                  />
-                </label>
-              </div>
-              <div className="grid-2">
-                <label className="field">
-                  <span>Nudge right (dots)</span>
-                  <input
-                    className="input"
-                    type="number"
-                    value={printer.offsetX}
-                    onChange={(e) => updatePrinter({ offsetX: Number(e.target.value) || 0 })}
-                  />
-                </label>
-                <label className="field">
-                  <span>Nudge down (dots)</span>
-                  <input
-                    className="input"
-                    type="number"
-                    value={printer.offsetY}
-                    onChange={(e) => updatePrinter({ offsetY: Number(e.target.value) || 0 })}
-                  />
-                </label>
-              </div>
-              <label className="check">
-                <input type="checkbox" checked={printer.rotate} onChange={(e) => updatePrinter({ rotate: e.target.checked })} />
-                <span>Rotate 90° (labels feed the 1.5&quot; edge first)</span>
+              <label className="field">
+                <span>Label roll</span>
+                <select
+                  className="select"
+                  value={printer.label}
+                  onChange={(e) => {
+                    const label = e.target.value as LabelSizeId;
+                    const next = LABEL_SIZES[label];
+                    updatePrinter(label === "custom" ? { label } : { label, widthMm: next.widthMm, heightMm: next.heightMm });
+                  }}
+                >
+                  {(Object.keys(LABEL_SIZES) as LabelSizeId[]).map((id) => (
+                    <option key={id} value={id}>
+                      {LABEL_SIZES[id].name}
+                    </option>
+                  ))}
+                </select>
               </label>
+
+              {printer.label === "custom" ? (
+                <div className="grid-2">
+                  <label className="field">
+                    <span>Width (mm)</span>
+                    {mmInput(printer.widthMm, (widthMm) => updatePrinter({ widthMm }))}
+                  </label>
+                  <label className="field">
+                    <span>Height (mm)</span>
+                    {mmInput(printer.heightMm, (heightMm) => updatePrinter({ heightMm }), 10, 62)}
+                  </label>
+                </div>
+              ) : "continuous" in preset ? (
+                <label className="field">
+                  <span>Badge length (mm)</span>
+                  {mmInput(printer.widthMm, (widthMm) => updatePrinter({ widthMm }), 40, 300)}
+                </label>
+              ) : null}
+
+              <div className="grid-2">
+                <label className="field">
+                  <span>Nudge right (mm)</span>
+                  {mmInput(printer.offsetXMm, (offsetXMm) => updatePrinter({ offsetXMm }), -20, 20)}
+                </label>
+                <label className="field">
+                  <span>Nudge down (mm)</span>
+                  {mmInput(printer.offsetYMm, (offsetYMm) => updatePrinter({ offsetYMm }), -20, 20)}
+                </label>
+              </div>
+              <p className="tiny subtle" style={{ margin: 0 }}>
+                If the badge prints shrunk or on the wrong paper size, run the command without{" "}
+                <code>--kiosk-printing</code>, print once from the dialog with the QL-800, the matching paper size,
+                margins set to None and scale at 100%, then relaunch. Chrome remembers those settings.
+              </p>
             </section>
 
             <section className="section">
               <h2 className="rv-label eyebrow">
                 <span>4 · Badge</span>
-                <span className="subtle">3&quot; × 1.5&quot;</span>
+                <span className="subtle">
+                  {size.widthMm} × {size.heightMm} mm
+                </span>
               </h2>
               <LabelPreview content={previewContent} settings={printer} />
               <div className="grid-2">
@@ -346,9 +348,6 @@ export function SetupApp() {
               <div className="row-inline">
                 <button className="rv-btn rv-btn--primary" onClick={testPrint}>
                   Print a test badge
-                </button>
-                <button className="rv-btn rv-btn--ghost" onClick={() => void printWithDialog(sample)}>
-                  Use the system print dialog instead
                 </button>
               </div>
             </section>

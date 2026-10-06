@@ -1,15 +1,15 @@
-// Draws the 3" × 1.5" name badge on a canvas in the brand typeface, then
-// thresholds it to the 1-bit image a direct-thermal printer burns.
+// Draws the name badge on a canvas in the brand typeface at the Brother
+// QL-800's 300 dpi, then thresholds it to pure black and white so the
+// driver prints crisp edges instead of dithering grey.
 //
 // Layout follows the printed Backstage Pass badge:
 //   ProPresenter lockup top-left, name centred, organization bottom-left,
 //   event mark bottom-right.
 
-import type { PrinterSettings } from "./types";
-import { labelZpl } from "./zpl";
+import { labelSizeMm, type PrinterSettings } from "./types";
 
-export const LABEL_WIDTH_IN = 3;
-export const LABEL_HEIGHT_IN = 1.5;
+export const PRINT_DPI = 300;
+const mmToPx = (mm: number) => Math.round((mm / 25.4) * PRINT_DPI);
 
 const FONT = '"Plus Jakarta Sans", system-ui, sans-serif';
 const LOGO_SRC = "/brand/propresenter-black.svg";
@@ -18,11 +18,10 @@ const LOGO_ASPECT = 854 / 121;
 export type LabelContent = { name: string; company: string };
 
 export type RenderedLabel = {
-  /** Thresholded 1-bit preview of exactly what will print. */
+  /** Black-and-white image of exactly what will print. */
   canvas: HTMLCanvasElement;
-  pixels: Uint8Array;
-  width: number;
-  height: number;
+  widthMm: number;
+  heightMm: number;
 };
 
 let logoPromise: Promise<HTMLImageElement> | null = null;
@@ -116,8 +115,11 @@ function drawBadge(ctx: Ctx, W: number, H: number, u: number, content: LabelCont
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
+  // Taller labels give the name more room, within reason.
+  const room = nameBottom - nameTop;
   const name = content.name.trim() || " ";
-  const oneLine = fitSize(ctx, name, 600, maxWidth, Math.round(0.36 * u), Math.round(0.24 * u));
+  const maxOne = Math.round(Math.min(0.46 * u, room * 0.7));
+  const oneLine = fitSize(ctx, name, 600, maxWidth, maxOne, Math.min(maxOne, Math.round(0.24 * u)));
   if (oneLine) {
     setFont(ctx, 600, oneLine, -0.02);
     ctx.fillText(name, W / 2, centerY);
@@ -135,7 +137,7 @@ function drawBadge(ctx: Ctx, W: number, H: number, u: number, content: LabelCont
     if (diff < bestDiff) [best, bestDiff] = [[a, b], diff];
   }
   const longer = best[0].length >= best[1].length ? best[0] : best[1];
-  const size = fitSize(ctx, longer, 600, maxWidth, Math.round(0.28 * u), 8) ?? 8;
+  const size = fitSize(ctx, longer, 600, maxWidth, Math.round(Math.min(0.34 * u, room * 0.42)), 8) ?? 8;
   setFont(ctx, 600, size, -0.02);
   const lines = best.filter(Boolean).map((l) => ellipsize(ctx, l, maxWidth));
   const lineH = size * 1.08;
@@ -144,57 +146,32 @@ function drawBadge(ctx: Ctx, W: number, H: number, u: number, content: LabelCont
 
 export async function renderLabel(content: LabelContent, settings: PrinterSettings): Promise<RenderedLabel> {
   const [logo] = await Promise.all([loadLogo(), loadFonts()]);
-  const u = settings.dpi;
-  const W = Math.round(LABEL_WIDTH_IN * u);
-  const H = Math.round(LABEL_HEIGHT_IN * u);
+  const { widthMm, heightMm } = labelSizeMm(settings);
+  const W = mmToPx(widthMm);
+  const H = mmToPx(heightMm);
+  // The layout was drawn for a 3" × 1.5" badge; scale it to whichever
+  // dimension of this roll is tighter.
+  const u = Math.min(W / 3, H / 1.5);
 
-  const art = document.createElement("canvas");
-  art.width = W;
-  art.height = H;
-  const ctx = art.getContext("2d")! as Ctx;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })! as Ctx;
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, W, H);
   ctx.save();
-  ctx.translate(settings.offsetX, settings.offsetY);
+  ctx.translate(mmToPx(settings.offsetXMm), mmToPx(settings.offsetYMm));
   drawBadge(ctx, W, H, u, content, logo);
   ctx.restore();
 
-  // Rotate for rolls that feed the short edge across the printhead.
-  const out = document.createElement("canvas");
-  out.width = settings.rotate ? H : W;
-  out.height = settings.rotate ? W : H;
-  const octx = out.getContext("2d", { willReadFrequently: true })!;
-  octx.fillStyle = "#fff";
-  octx.fillRect(0, 0, out.width, out.height);
-  if (settings.rotate) {
-    octx.translate(H, 0);
-    octx.rotate(Math.PI / 2);
+  const img = ctx.getImageData(0, 0, W, H);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const lum = 0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2];
+    const v = lum < 150 ? 0 : 255;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 255;
   }
-  octx.drawImage(art, 0, 0);
+  ctx.putImageData(img, 0, 0);
 
-  const img = octx.getImageData(0, 0, out.width, out.height);
-  const pixels = new Uint8Array(out.width * out.height);
-  for (let i = 0; i < pixels.length; i++) {
-    const r = img.data[i * 4];
-    const g = img.data[i * 4 + 1];
-    const b = img.data[i * 4 + 2];
-    const black = 0.299 * r + 0.587 * g + 0.114 * b < 150;
-    pixels[i] = black ? 1 : 0;
-    const v = black ? 0 : 255;
-    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
-    img.data[i * 4 + 3] = 255;
-  }
-  octx.setTransform(1, 0, 0, 1, 0, 0);
-  octx.putImageData(img, 0, 0);
-
-  return { canvas: out, pixels, width: out.width, height: out.height };
-}
-
-export function toZpl(label: RenderedLabel, settings: PrinterSettings): string {
-  return labelZpl({
-    pixels: label.pixels,
-    width: label.width,
-    height: label.height,
-    darkness: settings.darkness,
-  });
+  return { canvas, widthMm, heightMm };
 }

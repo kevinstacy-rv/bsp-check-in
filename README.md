@@ -1,6 +1,6 @@
 # Event check-in
 
-A staff check-in station for Renewed Vision events. Import attendees from a HubSpot contact segment, look someone up, and press **Print**. That checks them in, writes the check-in back to HubSpot, and prints a 3" × 1.5" name badge on a USB Zebra printer.
+A staff check-in station for Renewed Vision events. Import attendees from a HubSpot contact segment, look someone up, and press **Print**. That checks them in, writes the check-in back to HubSpot, and prints a name badge on a USB Brother QL-800 label printer.
 
 Built with Next.js and deployed on Vercel. The design follows the Renewed Vision design system (ProPresenter theme).
 
@@ -15,7 +15,7 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
 
   Both are created automatically the first time you import. You can rename them with environment variables (see below).
 - **Offline**: the roster and every check-in are saved in the browser. While Wi-Fi is down, check-ins queue and printing keeps working, because the printer is local. The queue syncs to HubSpot when the connection returns. The header shows sync and printer status.
-- **Badge**: drawn on a canvas in Plus Jakarta Sans with the ProPresenter lockup, then converted to a 1-bit ZPL graphic and sent through **Zebra Browser Print**. Long names shrink to fit, then wrap to two lines.
+- **Badge**: drawn on a canvas at 300 dpi in Plus Jakarta Sans with the ProPresenter lockup, then printed through the Mac's Brother driver on a page sized exactly to the label roll. With Chrome's kiosk printing turned on, it prints without a dialog. Long names shrink to fit, then wrap to two lines.
 
 ## Deploy to Vercel
 
@@ -36,19 +36,27 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
    - `crm.objects.companies.read`
    - `crm.schemas.contacts.read` and `crm.schemas.contacts.write` (to create the two properties)
 
-## Setting up the check-in computer
+## Setting up the check-in Mac
 
-1. Install [Zebra Browser Print](https://www.zebra.com/us/en/support-downloads/printer-software/by-request-software.html) and keep it running.
-2. Plug in the Zebra over USB. In Browser Print, make it the default printer.
-3. Open the site in Chrome and sign in with the staff password.
-4. On the **Setup** page, choose **Print a test badge**. Approve the prompts from Browser Print and Chrome ("allow this site to access devices on your local network").
-5. If the badge prints sideways or off-centre:
-   - Turn on **Rotate 90°** if your labels feed the 1.5" edge first.
-   - Use the nudge fields to shift the badge (203 dpi = 203 dots per inch).
-   - Switch to **300 dpi** if your printer is a 300 dpi model.
-6. Import the segment while you're still online. After that the station can run offline.
+1. Install the **Brother QL-800 driver for macOS** from [support.brother.com](https://support.brother.com). Plug the printer in over USB, add it in **System Settings → Printers & Scanners**, and make it the default printer.
+2. **Turn off Editor Lite**: hold the Editor Lite button on the printer until its green light goes out. While Editor Lite is on, the QL-800 appears as a USB drive instead of a printer.
+3. Load the label roll and pick the matching **Label roll** on the Setup page. The default is DK-1202 (100 × 62 mm).
+4. Open the check-in window with kiosk printing, so **Print** goes straight to the printer with no dialog. Run this in Terminal, replacing the URL with your Vercel address:
 
-**Use the system print dialog instead** prints the same badge through the normal print dialog. It's useful for checking the layout without Browser Print.
+   ```bash
+   open -na "Google Chrome" --args --kiosk-printing \
+     --user-data-dir="$HOME/Library/Application Support/CheckInChrome" \
+     https://your-check-in-site.vercel.app
+   ```
+
+   This uses a separate Chrome profile, so kiosk printing doesn't affect your everyday browsing. The Setup page shows the same command with your address already filled in, plus a Copy button.
+5. In that window, sign in and choose **Print a test badge** on the Setup page.
+6. If the badge comes out shrunk, cut off or on the wrong paper size:
+   - Run the same command **without** `--kiosk-printing`.
+   - Print a test badge from the dialog, choosing the QL-800, the paper size that matches your roll (e.g. 62 mm × 100 mm), margins **None** and scale **100%**.
+   - Relaunch with `--kiosk-printing`. Chrome remembers those print settings for that profile.
+   - Use the nudge fields on the Setup page for small shifts.
+7. Import the segment while you're still online. After that the station can run offline.
 
 ## Local development
 
@@ -56,7 +64,7 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
 cp .env.example .env.local   # fill in the values
 npm install
 npm run dev                  # http://localhost:3000
-npm test                     # unit tests (ZPL encoding, search, HubSpot client, offline queue)
+npm test                     # unit tests (search, HubSpot client, offline queue)
 npm run typecheck
 ```
 
@@ -77,9 +85,8 @@ src/
     hubspot.ts           HubSpot API client (server)
     store.ts             Local state + offline outbox (browser)
     sync.ts              Delivers the outbox to HubSpot
-    label.ts             Badge layout → 1-bit bitmap
-    zpl.ts               Bitmap → compressed ZPL
-    zebra.ts             Zebra Browser Print client
+    label.ts             Badge layout → black-and-white image at label size
+    print.ts             Prints the badge through the system printer driver
 public/
   brand/                 Logos from the Renewed Vision design system
   sw.js                  Offline caching

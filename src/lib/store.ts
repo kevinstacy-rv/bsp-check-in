@@ -22,12 +22,6 @@ export type Op =
 
 export type FailedOp = { op: Op; error: string; at: string };
 
-export type PrinterStatus =
-  | { state: "unknown" }
-  | { state: "ready"; name: string }
-  | { state: "missing" }
-  | { state: "unreachable"; message: string };
-
 type Persisted = {
   eventName: string;
   segment: Segment | null;
@@ -42,7 +36,6 @@ type Runtime = {
   online: boolean;
   syncing: boolean;
   syncError: string | null;
-  printerStatus: PrinterStatus;
 };
 
 export type State = Persisted & Runtime;
@@ -60,7 +53,6 @@ const initial: State = {
   online: true,
   syncing: false,
   syncError: null,
-  printerStatus: { state: "unknown" },
 };
 
 let state: State = initial;
@@ -95,7 +87,7 @@ function load() {
 }
 
 function persist() {
-  const { online: _o, syncing: _s, syncError: _e, printerStatus: _p, ...rest } = state;
+  const { online: _o, syncing: _s, syncError: _e, ...rest } = state;
   try {
     localStorage.setItem(KEY, JSON.stringify(rest));
   } catch {

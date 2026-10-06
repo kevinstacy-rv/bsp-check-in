@@ -11,7 +11,7 @@ export function LabelPreview({ content, settings }: { content: LabelContent; set
 
   useEffect(() => {
     let cancelled = false;
-    renderLabel(content, { ...settings, rotate: false })
+    renderLabel(content, settings)
       .then(({ canvas }) => {
         if (cancelled || !holder.current) return;
         canvas.setAttribute("role", "img");
