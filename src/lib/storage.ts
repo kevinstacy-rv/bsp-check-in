@@ -3,15 +3,35 @@ import { Redis } from "@upstash/redis";
 
 // Shared storage for past events and the phone preview: an Upstash Redis
 // database added to the Vercel project (Storage → Upstash for Redis). The
-// integration may name its variables KV_* or UPSTASH_REDIS_*; accept either.
+// integration names its variables KV_REST_API_* or UPSTASH_REDIS_REST_*, with
+// any custom prefix chosen when connecting it (e.g. bsp_KV_REST_API_URL).
+
+const PAIRS = [
+  ["KV_REST_API_URL", "KV_REST_API_TOKEN"],
+  ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
+] as const;
+
+/** Finds the REST URL and token, with or without a custom prefix. */
+export function findCredentials(env: Record<string, string | undefined>): { url: string; token: string } | null {
+  for (const [urlName, tokenName] of PAIRS) {
+    if (env[urlName] && env[tokenName]) return { url: env[urlName]!, token: env[tokenName]! };
+  }
+  for (const [urlName, tokenName] of PAIRS) {
+    for (const key of Object.keys(env)) {
+      if (!key.endsWith(urlName) || !env[key]) continue;
+      const token = env[key.slice(0, -urlName.length) + tokenName];
+      if (token) return { url: env[key]!, token };
+    }
+  }
+  return null;
+}
 
 let client: Redis | null | undefined;
 
 export function storage(): Redis | null {
   if (client !== undefined) return client;
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  client = url && token ? new Redis({ url, token }) : null;
+  const creds = findCredentials(process.env);
+  client = creds ? new Redis(creds) : null;
   return client;
 }
 

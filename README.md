@@ -33,7 +33,7 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
    | `SESSION_SECRET` | Long random string (`openssl rand -base64 32`) |
    | `HUBSPOT_CHECKIN_EVENT_PROPERTY` | Optional. Defaults to `event_check_in_name` |
    | `HUBSPOT_CHECKIN_TIME_PROPERTY` | Optional. Defaults to `event_check_in_at` |
-   | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Set automatically when you add Upstash (below). `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work |
+   | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Set automatically when you add Upstash (below). `UPSTASH_REDIS_REST_*` names and a custom prefix (e.g. `bsp_KV_REST_API_URL`) also work |
 
 3. The HubSpot private app needs these scopes:
    - `crm.lists.read` and `crm.lists.write`
