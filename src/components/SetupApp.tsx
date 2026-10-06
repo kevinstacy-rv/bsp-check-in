@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { printLabel } from "@/lib/print";
 import { getState, importRoster, setState, updatePrinter, useStore } from "@/lib/store";
 import { startSync } from "@/lib/sync";
 import { LABEL_SIZES, labelSizeMm, type Attendee, type LabelSizeId, type Segment } from "@/lib/types";
 import { LabelPreview } from "./LabelPreview";
+import { PrinterCheck } from "./PrinterCheck";
 import { Toasts, useToasts } from "./Toasts";
 import { TopBar } from "./TopBar";
 
@@ -34,14 +34,12 @@ export function SetupApp() {
   const [picked, setPicked] = useState<Segment | null>(null);
   const [loadingSegments, setLoadingSegments] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [origin, setOrigin] = useState("https://your-check-in-site");
   const [sample, setSample] = useState({ name: "Kevin Stacy", company: "Renewed Vision" });
 
   useEffect(() => {
     startSync();
     setEventDraft(getState().eventName);
     setPicked(getState().segment);
-    setOrigin(location.origin);
     void findSegments("");
   }, []);
 
@@ -99,20 +97,10 @@ export function SetupApp() {
     setPicked(null);
   }
 
-  async function testPrint() {
-    try {
-      await printLabel(sample);
-      push({ tone: "ok", message: "Test badge sent to the printer" });
-    } catch (e) {
-      push({ tone: "bad", message: (e as Error).message });
-    }
-  }
 
   const previewContent = useMemo(() => ({ ...sample }), [sample]);
   const size = labelSizeMm(printer);
   const preset = LABEL_SIZES[printer.label] ?? LABEL_SIZES["dk-1202"];
-  // A separate Chrome profile keeps kiosk printing off your everyday browsing.
-  const launchCommand = `open -na "Google Chrome" --args --kiosk-printing --user-data-dir="$HOME/Library/Application Support/CheckInChrome" ${origin}`;
   const mmInput = (value: number, onChange: (v: number) => void, min = 10, max = 300) => (
     <input
       className="input"
@@ -232,42 +220,11 @@ export function SetupApp() {
           </div>
 
           <div>
-            <section className="section">
+            <section className="section" id="printer">
               <h2 className="rv-label eyebrow">
                 <span>3 · Printer</span>
               </h2>
-              <div className="card">
-                <div className="h5">Brother QL-800 on this Mac</div>
-                <ol className="tiny muted" style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
-                  <li>
-                    Install the QL-800 driver for macOS from{" "}
-                    <a href="https://support.brother.com" target="_blank" rel="noreferrer">
-                      support.brother.com
-                    </a>
-                    , then add the printer in System Settings → Printers &amp; Scanners and make it the default.
-                  </li>
-                  <li>Turn off Editor Lite: hold its button on the printer until the green light goes out.</li>
-                  <li>
-                    Open Terminal and run the command below. It opens this site in its own Chrome window
-                    that prints without asking.
-                  </li>
-                  <li>In that window, sign in and print a test badge.</li>
-                </ol>
-                <div className="row-inline" style={{ marginTop: 8, flexWrap: "nowrap" }}>
-                  <code className="code">{launchCommand}</code>
-                  <button
-                    className="rv-btn rv-btn--sm rv-btn--outline"
-                    onClick={() =>
-                      navigator.clipboard
-                        .writeText(launchCommand)
-                        .then(() => push({ tone: "ok", message: "Command copied" }))
-                        .catch(() => push({ tone: "bad", message: "Couldn't copy. Select the command and copy it." }))
-                    }
-                  >
-                    Copy
-                  </button>
-                </div>
-              </div>
+              <PrinterCheck sample={sample} onToast={(tone, message) => push({ tone, message })} />
 
               <label className="field">
                 <span>Label roll</span>
@@ -316,11 +273,6 @@ export function SetupApp() {
                   {mmInput(printer.offsetYMm, (offsetYMm) => updatePrinter({ offsetYMm }), -20, 20)}
                 </label>
               </div>
-              <p className="tiny subtle" style={{ margin: 0 }}>
-                If the badge prints shrunk or on the wrong paper size, run the command without{" "}
-                <code>--kiosk-printing</code>, print once from the dialog with the QL-800, the matching paper size,
-                margins set to None and scale at 100%, then relaunch. Chrome remembers those settings.
-              </p>
             </section>
 
             <section className="section">
@@ -344,11 +296,6 @@ export function SetupApp() {
                     onChange={(e) => setSample((s) => ({ ...s, company: e.target.value }))}
                   />
                 </label>
-              </div>
-              <div className="row-inline">
-                <button className="rv-btn rv-btn--primary" onClick={testPrint}>
-                  Print a test badge
-                </button>
               </div>
             </section>
 

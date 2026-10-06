@@ -30,6 +30,8 @@ type Persisted = {
   outbox: Op[];
   failed: FailedOp[];
   printer: PrinterSettings;
+  /** When staff confirmed a test badge printed on this computer. */
+  printerVerifiedAt: string | null;
 };
 
 type Runtime = {
@@ -50,6 +52,7 @@ const initial: State = {
   outbox: [],
   failed: [],
   printer: DEFAULT_PRINTER,
+  printerVerifiedAt: null,
   online: true,
   syncing: false,
   syncError: null,

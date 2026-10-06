@@ -47,6 +47,7 @@ export function CheckInApp() {
   const eventName = useStore((s) => s.eventName);
   const segment = useStore((s) => s.segment);
   const failed = useStore((s) => s.failed);
+  const printerVerifiedAt = useStore((s) => s.printerVerifiedAt);
 
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -175,6 +176,17 @@ export function CheckInApp() {
           </div>
         ) : (
           <>
+            {!printerVerifiedAt && (
+              <div className="banner">
+                <span>
+                  <strong>The printer hasn&apos;t been tested on this computer.</strong> Check the Brother driver is
+                  installed and print a test badge before doors open.
+                </span>
+                <Link href="/setup#printer" className="rv-btn rv-btn--sm rv-btn--outline">
+                  Set up printer
+                </Link>
+              </div>
+            )}
             {failed.length > 0 && (
               <div className="banner banner--bad">
                 <span>

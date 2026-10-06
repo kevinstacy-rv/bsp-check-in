@@ -13,7 +13,12 @@ import type { PrinterSettings } from "./types";
 
 let queue: Promise<void> = Promise.resolve();
 
-async function printOnce(content: LabelContent, settings: PrinterSettings) {
+export type PrintResult = {
+  /** True when Chrome showed its print dialog, i.e. it wasn't launched with --kiosk-printing. */
+  dialogShown: boolean;
+};
+
+async function printOnce(content: LabelContent, settings: PrinterSettings): Promise<PrintResult> {
   const label = await renderLabel(content, settings);
   const blob = await new Promise<Blob>((resolve, reject) =>
     label.canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't draw the badge."))), "image/png"),
@@ -47,7 +52,9 @@ async function printOnce(content: LabelContent, settings: PrinterSettings) {
     const win = frame.contentWindow!;
     win.focus();
     // Blocks while a dialog is open; returns at once under --kiosk-printing.
+    const started = performance.now();
     win.print();
+    return { dialogShown: performance.now() - started > 1000 };
   } finally {
     // Give the spooler a moment before tearing the frame down.
     setTimeout(() => {
@@ -58,8 +65,11 @@ async function printOnce(content: LabelContent, settings: PrinterSettings) {
 }
 
 /** Prints one badge. Jobs run one after another so two quick presses don't collide. */
-export function printLabel(content: LabelContent, settings: PrinterSettings = getState().printer): Promise<void> {
+export function printLabel(content: LabelContent, settings: PrinterSettings = getState().printer): Promise<PrintResult> {
   const job = queue.then(() => printOnce(content, settings));
-  queue = job.catch(() => undefined);
+  queue = job.then(
+    () => undefined,
+    () => undefined,
+  );
   return job;
 }
