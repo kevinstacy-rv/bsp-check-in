@@ -72,3 +72,39 @@ describe("badge corrections", () => {
     expect(a.badgeName).toBeUndefined();
   });
 });
+
+describe("loadEvent", () => {
+  const record = {
+    id: "abcdefgh12",
+    name: "BSP Day 1",
+    segment: { id: "42", name: "Registrants" },
+    startedAt: "2026-10-06T15:00:00Z",
+    updatedAt: "2026-10-06T20:00:00Z",
+    finishedAt: "2026-10-06T21:00:00Z",
+    attendees: [
+      { ...person("1"), checkedInAt: "2026-10-06T15:05:00Z", badgeName: "Kev" },
+      { ...person("tmp_x"), walkIn: true, checkedInAt: "2026-10-06T15:10:00Z" },
+    ],
+  };
+
+  it("resumes the same record and re-queues walk-ins that never reached HubSpot", async () => {
+    const s = await fresh();
+    s.loadEvent(record, "resume");
+    const st = s.getState();
+    expect(st.eventId).toBe("abcdefgh12");
+    expect(st.roster[0].checkedInAt).toBe("2026-10-06T15:05:00Z");
+    expect(st.outbox.map((o) => o.kind)).toEqual(["walkin"]);
+  });
+
+  it("copies into a new event with nobody checked in", async () => {
+    const s = await fresh();
+    s.loadEvent(record, "copy", "BSP Day 2");
+    const st = s.getState();
+    expect(st.eventName).toBe("BSP Day 2");
+    expect(st.eventId).not.toBe("abcdefgh12");
+    expect(st.roster).toHaveLength(1);
+    expect(st.roster[0]).toMatchObject({ id: "1", checkedInAt: null });
+    expect(st.roster[0].badgeName).toBeUndefined();
+    expect(st.outbox).toEqual([]);
+  });
+});

@@ -5,7 +5,14 @@
 // bound for HubSpot wait in `outbox` until sync.ts delivers them.
 
 import { useSyncExternalStore } from "react";
-import { DEFAULT_PRINTER, type Attendee, type PrinterSettings, type Segment, type WalkInInput } from "./types";
+import {
+  DEFAULT_PRINTER,
+  type Attendee,
+  type EventRecord,
+  type PrinterSettings,
+  type Segment,
+  type WalkInInput,
+} from "./types";
 
 export type Op =
   | { id: string; kind: "checkin"; contactId: string; eventName: string; at: string }
@@ -270,6 +277,56 @@ export function setBadge(id: string, badge: { name: string; company: string }) {
       };
     }),
   }));
+}
+
+/**
+ * Puts a saved event on this station. "resume" carries on the same record
+ * (check-ins, walk-ins, corrections); "copy" starts a new event with the same
+ * segment and people, nobody checked in yet.
+ */
+export function loadEvent(event: EventRecord, mode: "resume" | "copy", newName?: string) {
+  const now = new Date().toISOString();
+  if (mode === "resume") {
+    // Walk-ins that never reached HubSpot still need creating.
+    const outbox: Op[] = event.attendees
+      .filter((a) => a.id.startsWith("tmp_"))
+      .map((a) => ({
+        id: uid(),
+        kind: "walkin",
+        tempId: a.id,
+        input: { firstName: a.firstName, lastName: a.lastName, company: a.company, email: a.email },
+        eventName: event.name,
+        segmentId: event.segment?.id ?? null,
+        at: a.checkedInAt,
+      }));
+    setState({
+      eventName: event.name,
+      segment: event.segment ? { ...event.segment, size: null, processingType: "" } : null,
+      roster: event.attendees,
+      importedAt: event.updatedAt,
+      outbox,
+      failed: [],
+      eventId: event.id,
+      eventStartedAt: event.startedAt,
+      eventSavedAt: event.updatedAt,
+    });
+    return;
+  }
+  setState({
+    eventName: newName?.trim() || event.name,
+    segment: event.segment ? { ...event.segment, size: null, processingType: "" } : null,
+    // Unsynced walk-ins from the old event have no HubSpot contact; leave them out.
+    roster: event.attendees
+      .filter((a) => !a.id.startsWith("tmp_"))
+      .map(({ checkedInAt: _c, walkIn: _w, badgeName: _n, badgeCompany: _b, ...a }) => ({ ...a, checkedInAt: null })),
+    importedAt: now,
+    outbox: [],
+    failed: [],
+    eventId: null,
+    eventStartedAt: null,
+    eventSavedAt: null,
+  });
+  ensureEvent();
 }
 
 export function updatePrinter(patch: Partial<PrinterSettings>) {

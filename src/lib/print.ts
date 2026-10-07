@@ -18,10 +18,36 @@ export type PrintResult = {
   dialogShown: boolean;
 };
 
+/**
+ * Brother's driver lists every DK size in portrait, with the tape width first
+ * (DK-1202 is "62mm x 100mm"). A landscape page doesn't match any of them, so
+ * Chrome falls back to the default paper and the printer reports the wrong
+ * roll. Send a portrait page instead, with the badge turned to fit it.
+ */
+function toPortrait(canvas: HTMLCanvasElement, flip: boolean): HTMLCanvasElement {
+  if (canvas.height >= canvas.width) return canvas;
+  const out = document.createElement("canvas");
+  out.width = canvas.height;
+  out.height = canvas.width;
+  const ctx = out.getContext("2d")!;
+  if (flip) {
+    ctx.translate(0, out.height);
+    ctx.rotate(-Math.PI / 2);
+  } else {
+    ctx.translate(out.width, 0);
+    ctx.rotate(Math.PI / 2);
+  }
+  ctx.drawImage(canvas, 0, 0);
+  return out;
+}
+
 async function printOnce(content: LabelContent, settings: PrinterSettings): Promise<PrintResult> {
   const label = await renderLabel(content, settings);
+  const page = toPortrait(label.canvas, settings.flip);
+  const pageWmm = Math.min(label.widthMm, label.heightMm);
+  const pageHmm = Math.max(label.widthMm, label.heightMm);
   const blob = await new Promise<Blob>((resolve, reject) =>
-    label.canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't draw the badge."))), "image/png"),
+    page.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't draw the badge."))), "image/png"),
   );
   const src = URL.createObjectURL(blob);
 
@@ -32,8 +58,8 @@ async function printOnce(content: LabelContent, settings: PrinterSettings): Prom
 
   try {
     const doc = frame.contentDocument!;
-    const w = `${label.widthMm}mm`;
-    const h = `${label.heightMm}mm`;
+    const w = `${pageWmm}mm`;
+    const h = `${pageHmm}mm`;
     doc.open();
     doc.write(`<!doctype html><html><head><title>Badge</title><style>
       @page { size: ${w} ${h}; margin: 0 }

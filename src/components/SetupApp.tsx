@@ -133,7 +133,7 @@ export function SetupApp() {
 
   const previewContent = useMemo(() => ({ ...sample }), [sample]);
   const size = labelSizeMm(printer);
-  const preset = LABEL_SIZES[printer.label] ?? LABEL_SIZES["dk-1202"];
+  const preset = LABEL_SIZES[printer.label] ?? LABEL_SIZES["dk-1234"];
   const mmInput = (value: number, onChange: (v: number) => void, min = 10, max = 300) => (
     <input
       className="input"
@@ -306,6 +306,10 @@ export function SetupApp() {
                   {mmInput(printer.offsetYMm, (offsetYMm) => updatePrinter({ offsetYMm }), -20, 20)}
                 </label>
               </div>
+              <label className="check">
+                <input type="checkbox" checked={printer.flip} onChange={(e) => updatePrinter({ flip: e.target.checked })} />
+                <span>Badge comes out upside down? Flip it</span>
+              </label>
             </section>
 
             <section className="section">

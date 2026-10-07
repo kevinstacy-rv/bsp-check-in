@@ -94,6 +94,7 @@ export const EVENT_ID_RE = /^[a-z0-9]{8,40}$/;
 
 /** Brother DK label rolls the QL-800 takes. Sizes are as the badge reads (landscape). */
 export const LABEL_SIZES = {
+  "dk-1234": { name: "DK-1234 name badge · 86 × 60 mm", widthMm: 86, heightMm: 60 },
   "dk-1202": { name: "DK-1202 shipping label · 100 × 62 mm", widthMm: 100, heightMm: 62 },
   "dk-2205": { name: "DK-2205 continuous 62 mm · cut to length", widthMm: 100, heightMm: 62, continuous: true },
   "dk-1201": { name: "DK-1201 address label · 90 × 29 mm", widthMm: 90, heightMm: 29 },
@@ -110,19 +111,22 @@ export type PrinterSettings = {
   /** Nudges in millimetres (positive = right / down). */
   offsetXMm: number;
   offsetYMm: number;
+  /** The badge prints sideways on the roll; flip it if it comes out upside down. */
+  flip: boolean;
 };
 
 export const DEFAULT_PRINTER: PrinterSettings = {
-  label: "dk-1202",
-  widthMm: 100,
-  heightMm: 62,
+  label: "dk-1234",
+  widthMm: 86,
+  heightMm: 60,
   offsetXMm: 0,
   offsetYMm: 0,
+  flip: false,
 };
 
 /** The badge's printed size for the chosen roll. */
 export function labelSizeMm(p: PrinterSettings): { widthMm: number; heightMm: number } {
-  const preset = LABEL_SIZES[p.label] ?? LABEL_SIZES["dk-1202"];
+  const preset = LABEL_SIZES[p.label] ?? LABEL_SIZES["dk-1234"];
   if (p.label === "custom") return { widthMm: p.widthMm, heightMm: p.heightMm };
   if ("continuous" in preset) return { widthMm: p.widthMm, heightMm: preset.heightMm };
   return { widthMm: preset.widthMm, heightMm: preset.heightMm };

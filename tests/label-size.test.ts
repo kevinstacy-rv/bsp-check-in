@@ -18,3 +18,9 @@ describe("labelSizeMm", () => {
     });
   });
 });
+
+describe("default roll", () => {
+  it("is the DK-1234 name badge", () => {
+    expect(labelSizeMm(DEFAULT_PRINTER)).toEqual({ widthMm: 86, heightMm: 60 });
+  });
+});

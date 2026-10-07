@@ -51,7 +51,7 @@ Without it, check-in and printing still work; Past events and Phone preview expl
 
 1. Install the **Brother QL-800 driver for macOS** from [support.brother.com](https://support.brother.com). Plug the printer in over USB, add it in **System Settings → Printers & Scanners**, and make it the default printer.
 2. **Turn off Editor Lite**: hold the Editor Lite button on the printer until its green light goes out. While Editor Lite is on, the QL-800 appears as a USB drive instead of a printer.
-3. Load the label roll and pick the matching **Label roll** on the Setup page. The default is DK-1202 (100 × 62 mm).
+3. Load the label roll and pick the matching **Label roll** on the Setup page. The default is DK-1234 name badges (86 × 60 mm). The badge is sent as a portrait page matching the driver's paper size and turned to fit; if it comes out upside down, tick **Flip it**.
 4. Open the check-in window with kiosk printing, so **Print** goes straight to the printer with no dialog. Run this in Terminal, replacing the URL with your Vercel address:
 
    ```bash
@@ -64,7 +64,7 @@ Without it, check-in and printing still work; Past events and Phone preview expl
 5. In that window, sign in and choose **Print a test badge** on the Setup page.
 6. If the badge comes out shrunk, cut off or on the wrong paper size:
    - Run the same command **without** `--kiosk-printing`.
-   - Print a test badge from the dialog, choosing the QL-800, the paper size that matches your roll (e.g. 62 mm × 100 mm), margins **None** and scale **100%**.
+   - Print a test badge from the dialog, choosing the QL-800, the paper size that matches your roll (e.g. 60mm x 86mm for DK-1234), margins **None** and scale **100%**.
    - Relaunch with `--kiosk-printing`. Chrome remembers those print settings for that profile.
    - Use the nudge fields on the Setup page for small shifts.
 7. Import the segment while you're still online. After that the station can run offline.

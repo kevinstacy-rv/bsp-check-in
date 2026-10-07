@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { saveEvent } from "@/lib/events";
 import { searchAttendees } from "@/lib/search";
+import { getState, loadEvent, useStore } from "@/lib/store";
 import { startSync } from "@/lib/sync";
 import { badgeContent, fullName, isCorrected, summarizeEvent, type Attendee, type EventRecord } from "@/lib/types";
 import { TopBar } from "./TopBar";
@@ -53,6 +55,8 @@ export function EventDetail({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const currentId = useStore((s) => s.eventId);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     startSync();
@@ -89,6 +93,37 @@ export function EventDetail({ id }: { id: string }) {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  async function makeCurrent(mode: "resume" | "copy") {
+    if (!event) return;
+    const s = getState();
+    if (s.outbox.length) {
+      setError(
+        `This computer has ${s.outbox.length} change${s.outbox.length === 1 ? "" : "s"} that haven't reached HubSpot yet. Get online and let them sync first.`,
+      );
+      return;
+    }
+    let newName: string | undefined;
+    if (mode === "copy") {
+      const answer = prompt("Name for the new event", event.name);
+      if (answer === null || !answer.trim()) return;
+      newName = answer.trim();
+    }
+    if (s.roster.length && s.eventId && s.eventId !== event.id) {
+      if (!confirm(`This replaces "${s.eventName}" on this computer. It stays saved in Past events.`)) return;
+    }
+    setBusy(true);
+    try {
+      // Make sure whatever was on the station is saved before swapping it out.
+      if (s.eventId && s.eventId !== event.id) await saveEvent();
+      loadEvent(event, mode, newName);
+      await saveEvent();
+    } finally {
+      setBusy(false);
+    }
+    // A copied event should pick up new RSVPs from HubSpot before doors open.
+    router.push(mode === "copy" ? "/setup" : "/");
+  }
+
   async function remove() {
     if (!event || !confirm(`Delete "${event.name}" from Past events? This can't be undone. HubSpot isn't changed.`)) return;
     const res = await fetch(`/api/events/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -116,11 +151,28 @@ export function EventDetail({ id }: { id: string }) {
                 </div>
                 <h1 className="h3">{event.name}</h1>
                 <div className="tiny subtle" style={{ marginTop: 4 }}>
-                  {event.finishedAt ? `Finished ${dateTime(event.finishedAt)}` : `Last saved ${dateTime(event.updatedAt)}`}
+                  {event.id === currentId
+                    ? "In progress on this computer"
+                    : event.finishedAt
+                      ? `Finished ${dateTime(event.finishedAt)}`
+                      : `Last saved ${dateTime(event.updatedAt)}`}
                 </div>
               </div>
               <div className="row-inline">
-                <button className="rv-btn rv-btn--primary" onClick={download}>
+                {event.id === currentId ? (
+                  <Link href="/" className="rv-btn rv-btn--primary">
+                    Open check-in
+                  </Link>
+                ) : (
+                  <button className="rv-btn rv-btn--primary" onClick={() => makeCurrent("resume")} disabled={busy}>
+                    {busy && <span className="spinner" />}
+                    Resume this event
+                  </button>
+                )}
+                <button className="rv-btn rv-btn--outline" onClick={() => makeCurrent("copy")} disabled={busy}>
+                  Start new event from this
+                </button>
+                <button className="rv-btn rv-btn--secondary" onClick={download}>
                   Download CSV
                 </button>
                 <button className="rv-btn rv-btn--ghost" onClick={remove}>
