@@ -35,13 +35,14 @@ export function TopBar({ active }: { active: "checkin" | "setup" | "events" }) {
 
   const pending = outbox.length;
   const syncTone = !online || syncError ? "warn" : pending ? "warn" : "ok";
+  const walkIns = `${pending} walk-in${pending === 1 ? "" : "s"}`;
   const syncLabel = !online
-    ? `Offline${pending ? ` · ${pending} to sync` : ""}`
+    ? `Offline · saved on this computer${pending ? ` · ${walkIns} to add` : ""}`
     : syncing
-      ? `Syncing ${pending}…`
+      ? `Adding ${walkIns} to HubSpot…`
       : pending
-        ? `${pending} waiting to sync`
-        : "Synced to HubSpot";
+        ? `${walkIns} waiting for HubSpot`
+        : "All saved";
 
   async function signOut() {
     await fetch("/api/logout", { method: "POST" }).catch(() => undefined);
@@ -64,7 +65,7 @@ export function TopBar({ active }: { active: "checkin" | "setup" | "events" }) {
         <button
           className="pill"
           onClick={() => void syncNow()}
-          title={syncError ?? "Sync now"}
+          title={syncError ?? "Check-ins save on this computer and to Past events; walk-ins are added to HubSpot as they happen"}
           aria-label={`${syncLabel}. Sync now`}
         >
           {syncing ? <span className="spinner" style={{ width: 10, height: 10 }} /> : <span className={`dot dot--${syncTone}`} />}

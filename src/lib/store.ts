@@ -14,18 +14,14 @@ import {
   type WalkInInput,
 } from "./types";
 
-export type Op =
-  | { id: string; kind: "checkin"; contactId: string; eventName: string; at: string }
-  | { id: string; kind: "undo"; contactId: string; eventName: string }
-  | {
-      id: string;
-      kind: "walkin";
-      tempId: string;
-      input: WalkInInput;
-      eventName: string;
-      segmentId: string | null;
-      at: string | null;
-    };
+/** Changes bound for HubSpot during the event: only creating walk-ins' contacts. */
+export type Op = {
+  id: string;
+  kind: "walkin";
+  tempId: string;
+  input: WalkInInput;
+  segmentId: string | null;
+};
 
 export type FailedOp = { op: Op; error: string; at: string };
 
@@ -101,6 +97,8 @@ function load() {
     ...initial,
     ...saved,
     printer: migratePrinter(saved.printer),
+    // Older versions queued check-ins for HubSpot; only walk-ins are queued now.
+    outbox: (saved.outbox ?? []).filter((o) => o.kind === "walkin"),
     online: navigator.onLine,
   };
   // Keep a second tab (e.g. setup open beside check-in) in step.
@@ -169,32 +167,17 @@ function patchAttendee(roster: Attendee[], id: string, patch: Partial<Attendee>)
 // ---------------------------------------------------------------------------
 // Actions
 
+// Check-ins stay in the app (and the autosaved event record) until staff
+// submit attendance after the event, so Undo never touches HubSpot.
+
 export function checkIn(id: string): Attendee | undefined {
   const at = new Date().toISOString();
-  setState((s) => {
-    const roster = patchAttendee(s.roster, id, { checkedInAt: at });
-    if (isTemp(id)) {
-      return { roster, outbox: s.outbox.map((o) => (o.kind === "walkin" && o.tempId === id ? { ...o, at } : o)) };
-    }
-    const outbox = s.outbox.filter((o) => !(o.kind !== "walkin" && o.contactId === id));
-    outbox.push({ id: uid(), kind: "checkin", contactId: id, eventName: s.eventName, at });
-    return { roster, outbox };
-  });
+  setState((s) => ({ roster: patchAttendee(s.roster, id, { checkedInAt: at }) }));
   return getState().roster.find((a) => a.id === id);
 }
 
 export function undoCheckIn(id: string) {
-  setState((s) => {
-    const roster = patchAttendee(s.roster, id, { checkedInAt: null });
-    if (isTemp(id)) {
-      return { roster, outbox: s.outbox.map((o) => (o.kind === "walkin" && o.tempId === id ? { ...o, at: null } : o)) };
-    }
-    // A check-in that never reached HubSpot can simply be dropped; otherwise send a clear.
-    const pending = s.outbox.some((o) => o.kind === "checkin" && o.contactId === id);
-    const outbox = s.outbox.filter((o) => !(o.kind !== "walkin" && o.contactId === id));
-    if (!pending) outbox.push({ id: uid(), kind: "undo", contactId: id, eventName: s.eventName });
-    return { roster, outbox };
-  });
+  setState((s) => ({ roster: patchAttendee(s.roster, id, { checkedInAt: null }) }));
 }
 
 export function addWalkIn(input: WalkInInput): Attendee {
@@ -212,15 +195,7 @@ export function addWalkIn(input: WalkInInput): Attendee {
     roster: [...s.roster, attendee],
     outbox: [
       ...s.outbox,
-      {
-        id: uid(),
-        kind: "walkin",
-        tempId: attendee.id,
-        input,
-        eventName: s.eventName,
-        segmentId: s.segment?.id ?? null,
-        at,
-      },
+      { id: uid(), kind: "walkin", tempId: attendee.id, input, segmentId: s.segment?.id ?? null },
     ],
   }));
   return attendee;
@@ -240,25 +215,30 @@ export function resolveWalkIn(tempId: string, realId: string) {
     } else {
       roster = patchAttendee(s.roster, tempId, { id: realId });
     }
-    const outbox = s.outbox.map((o) => (o.kind !== "walkin" && o.contactId === tempId ? { ...o, contactId: realId } : o));
-    return { roster, outbox };
+    return { roster };
   });
 }
 
-/** Replaces the roster with a fresh HubSpot import, keeping local changes that haven't synced. */
+/**
+ * Replaces the roster with a fresh HubSpot import. Check-ins and badge
+ * corrections live only in the app, so they carry across for everyone
+ * still on the list; walk-ins stay even if they aren't in the segment.
+ */
 export function importRoster(fetched: Attendee[]) {
   setState((s) => {
-    const pending = new Set(s.outbox.flatMap((o) => (o.kind === "walkin" ? [] : [o.contactId])));
     const local = new Map(s.roster.map((a) => [a.id, a]));
     const ids = new Set(fetched.map((a) => a.id));
     const merged = fetched.map((a) => {
       const mine = local.get(a.id);
-      // Badge corrections live only on this station, so carry them across.
-      const badge = mine ? { badgeName: mine.badgeName, badgeCompany: mine.badgeCompany } : {};
-      const withBadge = { ...a, ...Object.fromEntries(Object.entries(badge).filter(([, v]) => v !== undefined)) };
-      return pending.has(a.id) ? { ...withBadge, checkedInAt: mine?.checkedInAt ?? null } : withBadge;
+      if (!mine) return a;
+      return {
+        ...a,
+        checkedInAt: mine.checkedInAt,
+        ...(mine.walkIn ? { walkIn: true } : {}),
+        ...(mine.badgeName !== undefined ? { badgeName: mine.badgeName } : {}),
+        ...(mine.badgeCompany !== undefined ? { badgeCompany: mine.badgeCompany } : {}),
+      };
     });
-    // Walk-ins may not be in the segment (active segments can't be added to), so keep them.
     const walkIns = s.roster.filter((a) => a.walkIn && !ids.has(a.id));
     return { roster: [...merged, ...walkIns], importedAt: new Date().toISOString() };
   });
@@ -307,9 +287,7 @@ export function loadEvent(event: EventRecord, mode: "resume" | "copy", newName?:
         kind: "walkin",
         tempId: a.id,
         input: { firstName: a.firstName, lastName: a.lastName, company: a.company, email: a.email },
-        eventName: event.name,
         segmentId: event.segment?.id ?? null,
-        at: a.checkedInAt,
       }));
     setState({
       eventName: event.name,

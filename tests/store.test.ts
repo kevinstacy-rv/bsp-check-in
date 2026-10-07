@@ -10,38 +10,27 @@ async function fresh() {
   return store;
 }
 
-describe("offline queue", () => {
-  it("queues a check-in, and an undo before sync cancels it outright", async () => {
+describe("check-ins", () => {
+  it("stay on the station: nothing is queued for HubSpot", async () => {
     const s = await fresh();
     s.checkIn("1");
-    expect(s.getState().outbox.map((o) => o.kind)).toEqual(["checkin"]);
+    expect(s.getState().roster[0].checkedInAt).not.toBeNull();
     s.undoCheckIn("1");
-    expect(s.getState().outbox).toEqual([]);
     expect(s.getState().roster[0].checkedInAt).toBeNull();
-  });
-
-  it("sends an undo when the check-in already synced", async () => {
-    const s = await fresh();
-    s.setState({ roster: [{ ...person("1"), checkedInAt: "2026-10-06T15:00:00Z" }] });
-    s.undoCheckIn("1");
-    expect(s.getState().outbox.map((o) => o.kind)).toEqual(["undo"]);
+    expect(s.getState().outbox).toEqual([]);
   });
 
   it("swaps a walk-in's temporary id for the HubSpot id, merging duplicates", async () => {
     const s = await fresh();
     const w = s.addWalkIn({ firstName: "Ana", lastName: "Li", company: "", email: "" });
-    s.undoCheckIn(w.id);
-    const op = s.getState().outbox[0];
-    expect(op.kind === "walkin" && op.at).toBeNull();
-
-    s.checkIn(w.id);
+    expect(s.getState().outbox.map((o) => o.kind)).toEqual(["walkin"]);
     s.resolveWalkIn(w.id, "2"); // email matched contact 2, already on the roster
     const roster = s.getState().roster;
     expect(roster.map((a) => a.id)).toEqual(["1", "2"]);
     expect(roster[1].checkedInAt).not.toBeNull();
   });
 
-  it("keeps unsynced check-ins and walk-ins when re-importing", async () => {
+  it("keeps check-ins, corrections and walk-ins when re-importing", async () => {
     const s = await fresh();
     s.checkIn("1");
     s.addWalkIn({ firstName: "Ana", lastName: "", company: "", email: "" });
@@ -93,7 +82,7 @@ describe("loadEvent", () => {
     const st = s.getState();
     expect(st.eventId).toBe("abcdefgh12");
     expect(st.roster[0].checkedInAt).toBe("2026-10-06T15:05:00Z");
-    expect(st.outbox.map((o) => o.kind)).toEqual(["walkin"]);
+    expect(st.outbox.map((o) => o.tempId)).toEqual(["tmp_x"]);
   });
 
   it("copies into a new event with nobody checked in", async () => {

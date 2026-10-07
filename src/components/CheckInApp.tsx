@@ -225,7 +225,7 @@ export function CheckInApp() {
               <div className="banner banner--bad">
                 <span>
                   <strong>
-                    {failed.length} change{failed.length === 1 ? "" : "s"} didn&apos;t reach HubSpot.
+                    {failed.length} walk-in{failed.length === 1 ? "" : "s"} couldn&apos;t be added to HubSpot.
                   </strong>{" "}
                   Last error: {failed[failed.length - 1].error}
                 </span>

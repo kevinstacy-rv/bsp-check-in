@@ -8,14 +8,10 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
 
 - **Setup** (`/setup`): name the event, pick a HubSpot contact segment and import it. The app reads first name, last name and organization. Organization is the contact's `company` field, or its associated company's name when that field is blank.
 - **Check-in** (`/`): type to search by name, organization or email, then press **Print** (or **Enter**). The attendee is checked in first and the badge prints second, so a printer problem never loses a check-in. You can **Reprint** a badge or **Undo** a check-in.
-- **Walk-ins**: **Add walk-in** creates the contact in HubSpot (or updates the existing contact if the email matches), checks them in and prints. If the segment is static, they're added to it as well.
-- **HubSpot write-back**: each check-in sets two contact properties:
-  - `event_check_in_name`, the event name from setup
-  - `event_check_in_at`, the check-in time
-
-  Both are created automatically the first time you import. You can rename them with environment variables (see below). They always hold the contact's most recent check-in.
-- **Submitting attendance**: live check-ins only touch the two properties above, so Undo leaves no trace in HubSpot. When the event is over, **Finish event** (Setup) saves it and opens the event's page, where **Submit attendance to HubSpot** writes the permanent record: a static segment "<event> – Attended" with everyone who checked in, and a **Checked in at event** Custom Event on each attendee's timeline (event name, walk-in, any badge correction, at their actual check-in time). Timeline events can't be edited or deleted, which is why they wait for this step. **Submit again** after late changes brings the segment in line and logs events only for newly checked-in people. Both the segment and the event type are created automatically. Custom Events need an Enterprise hub and the scopes below; without them the segment is still created and the page says why events weren't logged.
-- **Offline**: the roster and every check-in are saved in the browser. While Wi-Fi is down, check-ins queue and printing keeps working, because the printer is local. The queue syncs to HubSpot when the connection returns. The header shows sync status.
+- **Walk-ins**: **Add walk-in** creates the contact in HubSpot (or finds the existing contact by email, without changing it), checks them in and prints. If the segment is static, they're added to it as well.
+- **Nothing about check-ins goes to HubSpot during the event.** Check-ins and Undo are saved on the station and to the event record in shared storage (every few seconds while online), so mistakes never reach HubSpot.
+- **Submitting attendance**: when the event is over, **Finish event** (Setup) saves it and opens the event's page, where **Submit attendance to HubSpot** writes the permanent record: a static segment "<event> – Attended" with everyone who checked in, and a **Checked in at event** Custom Event on each attendee's timeline (event name, walk-in, any badge correction, at their actual check-in time). Timeline events can't be edited or deleted, which is why they wait for this step. **Submit again** after late changes brings the segment in line and logs events only for newly checked-in people. Both the segment and the event type are created automatically. Custom Events need an Enterprise hub and the scopes below; without them the segment is still created and the page says why events weren't logged.
+- **Offline**: the roster and every check-in are saved in the browser, so check-in and printing keep working when Wi-Fi drops (the printer is local). Walk-ins queue and are added to HubSpot, and the event record saves to shared storage, when the connection returns. The header shows what's waiting.
 - **Badge**: drawn on a canvas at 300 dpi in Plus Jakarta Sans with the ProPresenter lockup, then printed through the Mac's Brother driver on a page sized exactly to the label roll. With Chrome's kiosk printing turned on, it prints without a dialog. Long names shrink to fit, then wrap to two lines.
 - **Printer check**: browsers can't see installed drivers, so Setup confirms the printer by printing a test badge and asking whether it came out. Until someone says yes, Setup shows the QL-800 driver download and steps, and the check-in screen shows a reminder.
 - **Badge corrections**: **Edit badge** fixes the name or organization on one person's badge for this event. HubSpot keeps the original; the change is noted in the event record.
@@ -32,15 +28,12 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
    | `HUBSPOT_TOKEN` | Private app access token |
    | `STAFF_PASSWORD` | Password staff type at the station |
    | `SESSION_SECRET` | Long random string (`openssl rand -base64 32`) |
-   | `HUBSPOT_CHECKIN_EVENT_PROPERTY` | Optional. Defaults to `event_check_in_name` |
-   | `HUBSPOT_CHECKIN_TIME_PROPERTY` | Optional. Defaults to `event_check_in_at` |
    | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Set automatically when you add Upstash (below). `UPSTASH_REDIS_REST_*` names and a custom prefix (e.g. `bsp_KV_REST_API_URL`) also work |
 
 3. The HubSpot private app needs these scopes:
    - `crm.lists.read` and `crm.lists.write`
    - `crm.objects.contacts.read` and `crm.objects.contacts.write`
    - `crm.objects.companies.read`
-   - `crm.schemas.contacts.read` and `crm.schemas.contacts.write` (to create the two properties)
    - `analytics.behavioral_events.send` and `behavioral_events.event_definitions.read_write` (Custom Events)
 
 ### Shared storage (past events and phone preview)

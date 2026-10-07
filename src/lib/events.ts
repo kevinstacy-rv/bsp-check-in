@@ -64,7 +64,9 @@ export function startEventAutosave() {
       saving = false;
     }
   };
-  setInterval(tick, 30000);
+  // Check-ins live only on the station and in this record until attendance is
+  // submitted, so save often (it only sends when something changed).
+  setInterval(tick, 10000);
   window.addEventListener("online", () => void tick());
   void tick();
 }

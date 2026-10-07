@@ -111,7 +111,7 @@ export function EventDetail({ id }: { id: string }) {
     const s = getState();
     if (s.outbox.length) {
       setError(
-        `This computer has ${s.outbox.length} change${s.outbox.length === 1 ? "" : "s"} that haven't reached HubSpot yet. Get online and let them sync first.`,
+        `This computer has ${s.outbox.length} walk-in${s.outbox.length === 1 ? "" : "s"} that haven't been added to HubSpot yet. Get online and let them sync first.`,
       );
       return;
     }
@@ -143,7 +143,7 @@ export function EventDetail({ id }: { id: string }) {
     if (s.eventId === event.id) {
       // Submit what HubSpot will actually agree with: everything synced and saved.
       if (s.outbox.length) {
-        setError("This computer still has check-ins that haven't reached HubSpot. Get online and let them sync, then submit.");
+        setError("This computer still has walk-ins that haven't been added to HubSpot. Get online and let them sync, then submit.");
         return;
       }
       const saved = await saveEvent();
@@ -265,8 +265,8 @@ export function EventDetail({ id }: { id: string }) {
               ) : (
                 <p className="tiny muted" style={{ margin: 0, lineHeight: 1.5 }}>
                   When check-in is done, submit to create the segment <strong>{event.name} – Attended</strong> and log
-                  &ldquo;Checked in at event&rdquo; on each attendee&apos;s timeline. Until then, everything in HubSpot can
-                  still be undone.
+                  &ldquo;Checked in at event&rdquo; on each attendee&apos;s timeline. Until then, check-ins aren&apos;t in
+                  HubSpot at all, so they can still be changed freely.
                 </p>
               )}
               {event.submission?.eventError && (

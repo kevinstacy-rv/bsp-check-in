@@ -110,7 +110,10 @@ export function SetupApp() {
 
   async function finishEvent() {
     if (outbox.length) {
-      push({ tone: "bad", message: `${outbox.length} changes haven't reached HubSpot yet. Get back online before finishing.` });
+      push({
+        tone: "bad",
+        message: `${outbox.length} walk-in${outbox.length === 1 ? " hasn't" : "s haven't"} been added to HubSpot yet. Get back online before finishing.`,
+      });
       return;
     }
     if (
@@ -128,9 +131,11 @@ export function SetupApp() {
       if (id) router.push(`/events/${id}?submit=1`);
       return;
     }
+    // Check-ins exist only here until the event is saved, so don't clear by default.
+    push({ tone: "bad", message: `The event couldn't be saved, so it's still on this computer. ${result.error}` });
     if (
       confirm(
-        `The event couldn't be saved to Past events: ${result.error}\n\nClear it from this computer anyway? The check-ins are still in HubSpot.`,
+        `The event couldn't be saved to Past events: ${result.error}\n\nCheck-ins are only on this computer until it's saved. Clearing now LOSES them. Clear anyway?`,
       )
     ) {
       clearStation();
@@ -178,8 +183,8 @@ export function SetupApp() {
                 </div>
               </label>
               <p className="tiny subtle" style={{ margin: 0 }}>
-                Saved to each contact&apos;s <strong>Event check-in: event</strong> property in HubSpot, with the time in{" "}
-                <strong>Event check-in: time</strong>. Keep the name the same all event.
+                Used for the HubSpot segment (&ldquo;{eventDraft.trim() || "Event name"} – Attended&rdquo;) and timeline
+                events when you submit attendance after the event.
               </p>
             </section>
 

@@ -6,10 +6,8 @@ import type { Attendee, Segment, WalkInInput } from "./types";
 const BASE = process.env.HUBSPOT_API_BASE || "https://api.hubapi.com";
 const CONTACT_OBJECT_TYPE = "0-1";
 
-export const CHECKIN_EVENT_PROP = process.env.HUBSPOT_CHECKIN_EVENT_PROPERTY || "event_check_in_name";
-export const CHECKIN_TIME_PROP = process.env.HUBSPOT_CHECKIN_TIME_PROPERTY || "event_check_in_at";
 
-const CONTACT_PROPS = ["firstname", "lastname", "company", "email", CHECKIN_EVENT_PROP, CHECKIN_TIME_PROP];
+const CONTACT_PROPS = ["firstname", "lastname", "company", "email"];
 
 export class HubSpotError extends Error {
   constructor(
@@ -162,7 +160,7 @@ async function associatedCompanyNames(contactIds: string[]): Promise<Map<string,
   return names;
 }
 
-export async function getSegmentAttendees(listId: string, eventName: string): Promise<Attendee[]> {
+export async function getSegmentAttendees(listId: string): Promise<Attendee[]> {
   const ids = await listMemberIds(listId);
   const contacts = await batchReadContacts(ids);
 
@@ -172,76 +170,15 @@ export async function getSegmentAttendees(listId: string, eventName: string): Pr
 
   return contacts.map((c) => {
     const p = c.properties;
-    const checkedInHere = eventName && p[CHECKIN_EVENT_PROP] === eventName && p[CHECKIN_TIME_PROP];
     return {
       id: c.id,
       firstName: p.firstname?.trim() ?? "",
       lastName: p.lastname?.trim() ?? "",
       company: p.company?.trim() || fallback.get(c.id) || "",
       email: p.email?.trim() ?? "",
-      checkedInAt: checkedInHere ? new Date(p[CHECKIN_TIME_PROP]!).toISOString() : null,
+      // Check-ins live in the app until attendance is submitted.
+      checkedInAt: null,
     };
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Check-in properties
-
-let propertiesReady: Promise<void> | null = null;
-
-/** Creates the two check-in contact properties if this portal doesn't have them yet. */
-export function ensureCheckInProperties(): Promise<void> {
-  propertiesReady ??= (async () => {
-    const wanted = [
-      {
-        name: CHECKIN_EVENT_PROP,
-        label: "Event check-in: event",
-        type: "string",
-        fieldType: "text",
-        description: "The last event this contact checked in at (set by the event check-in app).",
-      },
-      {
-        name: CHECKIN_TIME_PROP,
-        label: "Event check-in: time",
-        type: "datetime",
-        fieldType: "date",
-        description: "When this contact last checked in at an event (set by the event check-in app).",
-      },
-    ];
-    for (const prop of wanted) {
-      try {
-        await hs(`/crm/v3/properties/contacts/${prop.name}`);
-      } catch (e) {
-        if (!(e instanceof HubSpotError) || e.status !== 404) throw e;
-        await hs("/crm/v3/properties/contacts", {
-          method: "POST",
-          body: JSON.stringify({ ...prop, groupName: "contactinformation" }),
-        });
-      }
-    }
-  })().catch((e) => {
-    propertiesReady = null; // retry on the next call
-    throw e;
-  });
-  return propertiesReady;
-}
-
-function checkInProperties(eventName: string, at: string | null) {
-  return at
-    ? { [CHECKIN_EVENT_PROP]: eventName, [CHECKIN_TIME_PROP]: new Date(at).toISOString() }
-    : { [CHECKIN_EVENT_PROP]: "", [CHECKIN_TIME_PROP]: "" };
-}
-
-/**
- * Records a check-in (or, with `at: null`, clears it) on the contact's two
- * quick-filter properties. Fully reversible: the permanent attendance record
- * (segment + Custom Events) is written only when staff submit the event.
- */
-export async function setCheckIn(contactId: string, eventName: string, at: string | null): Promise<void> {
-  await ensureCheckInProperties();
-  await hs(`/crm/v3/objects/contacts/${encodeURIComponent(contactId)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ properties: checkInProperties(eventName, at) }),
   });
 }
 
@@ -260,41 +197,35 @@ async function findContactByEmail(email: string): Promise<string | null> {
 }
 
 /**
- * Creates (or, when the email already exists, updates) the walk-in's contact,
- * records the check-in (unless `at` is null), and tries to add them to the event segment.
+ * Creates the walk-in's contact, or finds the existing one by email (left
+ * unchanged), and tries to add them to the event segment. Their check-in
+ * itself stays in the app until attendance is submitted.
  */
 export async function createWalkIn(
   input: WalkInInput,
-  eventName: string,
-  at: string | null,
   segmentId: string | null,
 ): Promise<{ id: string; existing: boolean }> {
-  await ensureCheckInProperties();
   const email = input.email.trim().toLowerCase();
-  const props: Record<string, string> = {
-    ...(at ? checkInProperties(eventName, at) : {}),
-    firstname: input.firstName.trim(),
-    lastname: input.lastName.trim(),
-    ...(input.company.trim() ? { company: input.company.trim() } : {}),
-  };
-
   let id = email ? await findContactByEmail(email) : null;
   const existing = Boolean(id);
-  if (id) {
-    // Don't overwrite an existing contact's name; staff typed it in a hurry.
-    const { firstname: _f, lastname: _l, ...rest } = props;
-    await hs(`/crm/v3/objects/contacts/${id}`, { method: "PATCH", body: JSON.stringify({ properties: rest }) });
-  } else {
+  if (!id) {
     const created = await hs<{ id: string }>("/crm/v3/objects/contacts", {
       method: "POST",
-      body: JSON.stringify({ properties: { ...props, ...(email ? { email } : {}) } }),
+      body: JSON.stringify({
+        properties: {
+          firstname: input.firstName.trim(),
+          lastname: input.lastName.trim(),
+          ...(input.company.trim() ? { company: input.company.trim() } : {}),
+          ...(email ? { email } : {}),
+        },
+      }),
     });
     id = created.id;
   }
 
   if (segmentId) {
     // Only static (MANUAL/SNAPSHOT) segments accept direct adds. An active
-    // segment rejects this, which is fine: the contact still carries the check-in.
+    // segment rejects this, which is fine: submitting attendance covers them.
     await hs(`/crm/v3/lists/${encodeURIComponent(segmentId)}/memberships/add`, {
       method: "PUT",
       body: JSON.stringify([id]),

@@ -22,13 +22,9 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const propsOk = () => {
-  routes["GET /crm/v3/properties/contacts/[a-z_]+"] = () => ({ json: {} });
-};
 
 describe("getSegmentAttendees", () => {
   it("pages memberships, reads contacts and falls back to the associated company", async () => {
-    propsOk();
     routes["GET /crm/v3/lists/42/memberships"] = (_b, url) =>
       url.searchParams.get("after")
         ? { json: { results: [{ recordId: "3" }] } }
@@ -41,8 +37,6 @@ describe("getSegmentAttendees", () => {
             firstname: { "1": "Kevin", "2": "Ana", "3": "Marcus" }[id],
             lastname: "X",
             company: id === "1" ? "Renewed Vision" : "",
-            event_check_in_name: id === "2" ? "BSP" : id === "3" ? "Old event" : null,
-            event_check_in_at: id !== "1" ? "2026-10-06T15:00:00.000Z" : null,
           },
         })),
       },
@@ -55,64 +49,34 @@ describe("getSegmentAttendees", () => {
     });
 
     const { getSegmentAttendees } = await import("../src/lib/hubspot");
-    const people = await getSegmentAttendees("42", "BSP");
+    const people = await getSegmentAttendees("42");
     expect(people.map((p) => [p.id, p.company, p.checkedInAt])).toEqual([
       ["1", "Renewed Vision", null],
-      ["2", "Hillsong", "2026-10-06T15:00:00.000Z"],
-      ["3", "", null], // checked in to a different event
+      ["2", "Hillsong", null],
+      ["3", "", null],
     ]);
-  });
-});
-
-describe("setCheckIn", () => {
-  it("creates missing properties once, then patches the contact", async () => {
-    let created = 0;
-    routes["GET /crm/v3/properties/contacts/[a-z_]+"] = () => ({ status: 404, json: {} });
-    routes["POST /crm/v3/properties/contacts"] = () => {
-      created++;
-      return { status: 201, json: {} };
-    };
-    routes["PATCH /crm/v3/objects/contacts/7"] = () => ({ json: {} });
-
-    const { setCheckIn } = await import("../src/lib/hubspot");
-    await setCheckIn("7", "BSP", "2026-10-06T15:00:00.000Z");
-    await setCheckIn("7", "BSP", null);
-    expect(created).toBe(2);
-    const patches = calls.filter((c) => c.method === "PATCH").map((c) => c.body);
-    expect(patches).toEqual([
-      { properties: { event_check_in_name: "BSP", event_check_in_at: "2026-10-06T15:00:00.000Z" } },
-      { properties: { event_check_in_name: "", event_check_in_at: "" } },
-    ]);
+    const read = calls.find((c) => c.path.endsWith("/contacts/batch/read"))!.body as any;
+    expect(read.properties).toEqual(["firstname", "lastname", "company", "email"]);
   });
 });
 
 describe("createWalkIn", () => {
-  it("updates an existing contact found by email without renaming it", async () => {
-    propsOk();
+  it("uses an existing contact found by email and leaves it unchanged", async () => {
     routes["POST /crm/v3/objects/contacts/search"] = () => ({ json: { results: [{ id: "55" }] } });
-    routes["PATCH /crm/v3/objects/contacts/55"] = () => ({ json: {} });
     routes["PUT /crm/v3/lists/42/memberships/add"] = () => ({ status: 400, json: { message: "dynamic list" } });
 
     const { createWalkIn } = await import("../src/lib/hubspot");
-    const res = await createWalkIn(
-      { firstName: "kev", lastName: "s", company: "RV", email: "Kevin@Example.com " },
-      "BSP",
-      "2026-10-06T15:00:00.000Z",
-      "42",
-    );
+    const res = await createWalkIn({ firstName: "kev", lastName: "s", company: "RV", email: "Kevin@Example.com " }, "42");
     expect(res).toEqual({ id: "55", existing: true });
     const search = calls.find((c) => c.path.endsWith("/search"))!.body as any;
     expect(search.filterGroups[0].filters[0].value).toBe("kevin@example.com");
-    const patch = calls.find((c) => c.method === "PATCH")!.body as any;
-    expect(patch.properties.firstname).toBeUndefined();
-    expect(patch.properties.company).toBe("RV");
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
   it("creates a new contact when there's no email", async () => {
-    propsOk();
     routes["POST /crm/v3/objects/contacts"] = () => ({ status: 201, json: { id: "77" } });
     const { createWalkIn } = await import("../src/lib/hubspot");
-    const res = await createWalkIn({ firstName: "Ana", lastName: "Li", company: "", email: "" }, "BSP", null, null);
+    const res = await createWalkIn({ firstName: "Ana", lastName: "Li", company: "", email: "" }, null);
     expect(res).toEqual({ id: "77", existing: false });
     const create = calls.find((c) => c.path === "/crm/v3/objects/contacts")!.body as any;
     expect(create.properties).toEqual({ firstname: "Ana", lastname: "Li" });
@@ -193,12 +157,10 @@ describe("submitAttendance", () => {
   });
 });
 
-describe("live check-ins", () => {
-  it("only touch the reversible properties", async () => {
-    routes["GET /crm/v3/properties/contacts/[a-z_]+"] = () => ({ json: {} });
-    routes["PATCH /crm/v3/objects/contacts/7"] = () => ({ json: {} });
-    const { setCheckIn } = await import("../src/lib/hubspot");
-    await setCheckIn("7", "BSP", "2026-10-06T15:00:00.000Z");
-    expect(calls.some((c) => c.path.startsWith("/events/"))).toBe(false);
+describe("during the event", () => {
+  it("never writes check-in properties to contacts", async () => {
+    const mod = await import("../src/lib/hubspot");
+    expect("setCheckIn" in mod).toBe(false);
+    expect("ensureCheckInProperties" in mod).toBe(false);
   });
 });

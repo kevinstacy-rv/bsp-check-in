@@ -26,21 +26,8 @@ async function post<T>(url: string, body: unknown): Promise<T> {
 }
 
 async function run(op: Op) {
-  switch (op.kind) {
-    case "checkin":
-      return post("/api/hubspot/checkin", { contactId: op.contactId, eventName: op.eventName, at: op.at });
-    case "undo":
-      return post("/api/hubspot/checkin", { contactId: op.contactId, eventName: op.eventName, at: null });
-    case "walkin": {
-      const { id } = await post<{ id: string }>("/api/hubspot/walk-ins", {
-        ...op.input,
-        eventName: op.eventName,
-        segmentId: op.segmentId,
-        at: op.at,
-      });
-      resolveWalkIn(op.tempId, id);
-    }
-  }
+  const { id } = await post<{ id: string }>("/api/hubspot/walk-ins", { ...op.input, segmentId: op.segmentId });
+  resolveWalkIn(op.tempId, id);
 }
 
 let running = false;
