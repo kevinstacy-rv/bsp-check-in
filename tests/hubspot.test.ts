@@ -100,7 +100,7 @@ describe("createWalkIn", () => {
       "2026-10-06T15:00:00.000Z",
       "42",
     );
-    expect(res).toEqual({ id: "55", existing: true });
+    expect(res).toMatchObject({ id: "55", existing: true });
     const search = calls.find((c) => c.path.endsWith("/search"))!.body as any;
     expect(search.filterGroups[0].filters[0].value).toBe("kevin@example.com");
     const patch = calls.find((c) => c.method === "PATCH")!.body as any;
@@ -113,8 +113,67 @@ describe("createWalkIn", () => {
     routes["POST /crm/v3/objects/contacts"] = () => ({ status: 201, json: { id: "77" } });
     const { createWalkIn } = await import("../src/lib/hubspot");
     const res = await createWalkIn({ firstName: "Ana", lastName: "Li", company: "", email: "" }, "BSP", null, null);
-    expect(res).toEqual({ id: "77", existing: false });
+    expect(res).toMatchObject({ id: "77", existing: false, eventLogged: false });
     const create = calls.find((c) => c.path === "/crm/v3/objects/contacts")!.body as any;
     expect(create.properties).toEqual({ firstname: "Ana", lastname: "Li" });
+  });
+});
+
+describe("Custom Events", () => {
+  it("creates the event definitions once and logs check-ins and undos with stable ids", async () => {
+    propsOk();
+    let defsCreated = 0;
+    routes["GET /events/v3/event-definitions/[a-z_]+"] = () => ({ status: 404, json: {} });
+    routes["POST /events/v3/event-definitions"] = (body) => {
+      defsCreated++;
+      return { status: 201, json: { fullyQualifiedName: `pe123_${body.name}` } };
+    };
+    routes["PATCH /crm/v3/objects/contacts/7"] = () => ({ json: {} });
+    routes["POST /events/v3/send"] = () => ({ status: 204 });
+
+    const { setCheckIn } = await import("../src/lib/hubspot");
+    const at = "2026-10-06T15:00:00.000Z";
+    expect(await setCheckIn("7", "BSP", at, { badgeName: "Kev" })).toEqual({ eventLogged: true });
+    expect(await setCheckIn("7", "BSP", at, { badgeName: "Kev" })).toEqual({ eventLogged: true });
+    expect(await setCheckIn("7", "BSP", null)).toEqual({ eventLogged: true });
+
+    expect(defsCreated).toBe(2); // check-in and undo, each once
+    const sends = calls.filter((c) => c.path === "/events/v3/send").map((c) => c.body as any);
+    expect(sends[0]).toMatchObject({
+      eventName: "pe123_event_check_in",
+      objectId: "7",
+      occurredAt: at,
+      properties: { event_name: "BSP", walk_in: "No", badge_name: "Kev" },
+    });
+    expect(sends[0].uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(sends[1].uuid).toBe(sends[0].uuid); // a retried sync can't double-log
+    expect(sends[2].eventName).toBe("pe123_event_check_in_undone");
+  });
+
+  it("keeps the check-in when the account can't use Custom Events", async () => {
+    propsOk();
+    routes["GET /events/v3/event-definitions/[a-z_]+"] = () => ({ status: 403, json: { message: "no scope" } });
+    routes["PATCH /crm/v3/objects/contacts/7"] = () => ({ json: {} });
+
+    const { setCheckIn } = await import("../src/lib/hubspot");
+    const result = await setCheckIn("7", "BSP", "2026-10-06T15:00:00.000Z");
+    expect(result.eventLogged).toBe(false);
+    expect(result.eventError).toMatch(/Custom Events/);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(true);
+  });
+
+  it("logs walk-ins as walk-ins", async () => {
+    propsOk();
+    routes["GET /events/v3/event-definitions/[a-z_]+"] = (_b, url) => ({
+      json: { fullyQualifiedName: `pe123_${url.pathname.split("/").pop()}` },
+    });
+    routes["POST /crm/v3/objects/contacts"] = () => ({ status: 201, json: { id: "88" } });
+    routes["POST /events/v3/send"] = () => ({ status: 204 });
+
+    const { createWalkIn } = await import("../src/lib/hubspot");
+    const res = await createWalkIn({ firstName: "Ana", lastName: "", company: "", email: "" }, "BSP", "2026-10-06T15:00:00.000Z", null);
+    expect(res).toMatchObject({ id: "88", eventLogged: true });
+    const send = calls.find((c) => c.path === "/events/v3/send")!.body as any;
+    expect(send.properties.walk_in).toBe("Yes");
   });
 });

@@ -25,20 +25,32 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   throw new Transient(message);
 }
 
+type EventResult = { eventLogged?: boolean; eventError?: string };
+
+function noteEvent(r: EventResult) {
+  if (r.eventError) setState({ hubspotEventError: r.eventError });
+  else if (r.eventLogged) setState({ hubspotEventError: null });
+}
+
 async function run(op: Op) {
   switch (op.kind) {
-    case "checkin":
-      return post("/api/hubspot/checkin", { contactId: op.contactId, eventName: op.eventName, at: op.at });
+    case "checkin": {
+      const { kind: _k, id: _i, ...body } = op;
+      return noteEvent(await post<EventResult>("/api/hubspot/checkin", body));
+    }
     case "undo":
-      return post("/api/hubspot/checkin", { contactId: op.contactId, eventName: op.eventName, at: null });
+      return noteEvent(
+        await post<EventResult>("/api/hubspot/checkin", { contactId: op.contactId, eventName: op.eventName, at: null }),
+      );
     case "walkin": {
-      const { id } = await post<{ id: string }>("/api/hubspot/walk-ins", {
+      const { id, ...event } = await post<{ id: string } & EventResult>("/api/hubspot/walk-ins", {
         ...op.input,
         eventName: op.eventName,
         segmentId: op.segmentId,
         at: op.at,
       });
       resolveWalkIn(op.tempId, id);
+      noteEvent(event);
     }
   }
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { Attendee, Segment, WalkInInput } from "./types";
 
 const BASE = "https://api.hubapi.com";
@@ -230,12 +231,27 @@ function checkInProperties(eventName: string, at: string | null) {
     : { [CHECKIN_EVENT_PROP]: "", [CHECKIN_TIME_PROP]: "" };
 }
 
-export async function setCheckIn(contactId: string, eventName: string, at: string | null): Promise<void> {
+export type CheckInDetails = { walkIn?: boolean; badgeName?: string; badgeCompany?: string };
+export type EventLogResult = { eventLogged: boolean; eventError?: string };
+
+/**
+ * Records a check-in (or, with `at: null`, an undo) on the contact: the two
+ * quick-filter properties, plus a Custom Event on the contact's timeline.
+ */
+export async function setCheckIn(
+  contactId: string,
+  eventName: string,
+  at: string | null,
+  details: CheckInDetails = {},
+): Promise<EventLogResult> {
   await ensureCheckInProperties();
   await hs(`/crm/v3/objects/contacts/${encodeURIComponent(contactId)}`, {
     method: "PATCH",
     body: JSON.stringify({ properties: checkInProperties(eventName, at) }),
   });
+  return at
+    ? logEvent(CHECKIN_EVENT, contactId, at, eventName, details)
+    : logEvent(UNDO_EVENT, contactId, new Date().toISOString(), eventName, details);
 }
 
 // ---------------------------------------------------------------------------
@@ -293,5 +309,104 @@ export async function createWalkIn(
       body: JSON.stringify([id]),
     }).catch(() => undefined);
   }
-  return { id: id!, existing };
+  const event = at ? await logEvent(CHECKIN_EVENT, id!, at, eventName, { walkIn: true }) : { eventLogged: false };
+  return { id: id!, existing, ...event };
+}
+
+// ---------------------------------------------------------------------------
+// Custom Events (contact timeline, lists, workflows, reports)
+//
+// Needs an Enterprise hub and the analytics.behavioral_events.send and
+// behavioral_events.event_definitions.read_write scopes. Without them,
+// check-ins still save to the properties above; the app reports the problem
+// instead of blocking check-in.
+
+type EventDef = { name: string; label: string; description: string };
+
+export const CHECKIN_EVENT: EventDef = {
+  name: "event_check_in",
+  label: "Checked in at event",
+  description: "Logged by the event check-in app when someone is checked in and their badge prints.",
+};
+
+export const UNDO_EVENT: EventDef = {
+  name: "event_check_in_undone",
+  label: "Event check-in undone",
+  description: "Logged by the event check-in app when staff undo a check-in.",
+};
+
+const EVENT_PROPERTIES = [
+  { name: "event_name", label: "Event", type: "string", description: "The event name set in the check-in app." },
+  { name: "walk_in", label: "Walk-in", type: "string", description: "Yes if they registered at the door." },
+  { name: "badge_name", label: "Name on badge", type: "string", description: "Set only when staff corrected the badge." },
+  {
+    name: "badge_company",
+    label: "Organization on badge",
+    type: "string",
+    description: "Set only when staff corrected the badge.",
+  },
+];
+
+const definitions = new Map<string, Promise<string>>();
+
+/** Returns the event's fully qualified name, creating the definition the first time. */
+function eventDefinition(def: EventDef): Promise<string> {
+  let pending = definitions.get(def.name);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const found = await hs<{ fullyQualifiedName: string }>(`/events/v3/event-definitions/${def.name}`);
+        return found.fullyQualifiedName;
+      } catch (e) {
+        if (!(e instanceof HubSpotError) || e.status !== 404) throw e;
+      }
+      const created = await hs<{ fullyQualifiedName: string }>("/events/v3/event-definitions", {
+        method: "POST",
+        body: JSON.stringify({ ...def, primaryObject: "CONTACT", propertyDefinitions: EVENT_PROPERTIES }),
+      });
+      return created.fullyQualifiedName;
+    })();
+    definitions.set(def.name, pending);
+    pending.catch(() => definitions.delete(def.name));
+  }
+  return pending;
+}
+
+/** Same inputs give the same id, so a retried sync can't log the event twice. */
+function occurrenceId(...parts: string[]): string {
+  const h = createHash("sha256").update(parts.join("|")).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+async function logEvent(
+  def: EventDef,
+  contactId: string,
+  occurredAt: string,
+  eventName: string,
+  details: CheckInDetails,
+): Promise<EventLogResult> {
+  try {
+    const fqn = await eventDefinition(def);
+    const properties: Record<string, string> = { event_name: eventName, walk_in: details.walkIn ? "Yes" : "No" };
+    if (details.badgeName) properties.badge_name = details.badgeName;
+    if (details.badgeCompany !== undefined) properties.badge_company = details.badgeCompany;
+    await hs("/events/v3/send", {
+      method: "POST",
+      body: JSON.stringify({
+        eventName: fqn,
+        objectId: contactId,
+        occurredAt: new Date(occurredAt).toISOString(),
+        properties,
+        uuid: occurrenceId(def.name, contactId, occurredAt),
+      }),
+    });
+    return { eventLogged: true };
+  } catch (e) {
+    // Missing plan or scopes, or HubSpot rejecting the event itself: keep
+    // checking people in and tell staff, rather than retrying forever.
+    if (e instanceof HubSpotError && [400, 401, 403, 404].includes(e.status)) {
+      return { eventLogged: false, eventError: `HubSpot Custom Events: ${e.message}` };
+    }
+    throw e;
+  }
 }

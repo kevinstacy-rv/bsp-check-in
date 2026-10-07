@@ -13,7 +13,8 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
   - `event_check_in_name`, the event name from setup
   - `event_check_in_at`, the check-in time
 
-  Both are created automatically the first time you import. You can rename them with environment variables (see below).
+  Both are created automatically the first time you import. You can rename them with environment variables (see below). They always hold the contact's most recent check-in.
+- **HubSpot Custom Events**: each check-in is also logged on the contact's timeline as a **Checked in at event** event, with the event name, whether they were a walk-in, and any badge correction. Every event a contact attends stays on record, so lists, reports and workflows can use them (e.g. "completed Checked in at event where Event = Backstage Pass 2026"). Logged events can't be edited or deleted, so **Undo** logs an **Event check-in undone** event and clears the two properties. Both event types are created automatically. Custom Events need an Enterprise hub; without one (or the scopes below), check-ins still save to the properties and the check-in screen says why the events aren't logging.
 - **Offline**: the roster and every check-in are saved in the browser. While Wi-Fi is down, check-ins queue and printing keeps working, because the printer is local. The queue syncs to HubSpot when the connection returns. The header shows sync status.
 - **Badge**: drawn on a canvas at 300 dpi in Plus Jakarta Sans with the ProPresenter lockup, then printed through the Mac's Brother driver on a page sized exactly to the label roll. With Chrome's kiosk printing turned on, it prints without a dialog. Long names shrink to fit, then wrap to two lines.
 - **Printer check**: browsers can't see installed drivers, so Setup confirms the printer by printing a test badge and asking whether it came out. Until someone says yes, Setup shows the QL-800 driver download and steps, and the check-in screen shows a reminder.
@@ -40,6 +41,7 @@ Built with Next.js and deployed on Vercel. The design follows the Renewed Vision
    - `crm.objects.contacts.read` and `crm.objects.contacts.write`
    - `crm.objects.companies.read`
    - `crm.schemas.contacts.read` and `crm.schemas.contacts.write` (to create the two properties)
+   - `analytics.behavioral_events.send` and `behavioral_events.event_definitions.read_write` (Custom Events)
 
 ### Shared storage (past events and phone preview)
 
