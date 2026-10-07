@@ -50,7 +50,6 @@ export function CheckInApp() {
   const segment = useStore((s) => s.segment);
   const failed = useStore((s) => s.failed);
   const printerVerifiedAt = useStore((s) => s.printerVerifiedAt);
-  const hubspotEventError = useStore((s) => s.hubspotEventError);
 
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -220,13 +219,6 @@ export function CheckInApp() {
                 <Link href="/setup#printer" className="rv-btn rv-btn--sm rv-btn--outline">
                   Set up printer
                 </Link>
-              </div>
-            )}
-            {hubspotEventError && (
-              <div className="banner">
-                <span>
-                  <strong>Check-ins are saving to HubSpot, but not as Custom Events.</strong> {hubspotEventError}
-                </span>
               </div>
             )}
             {failed.length > 0 && (

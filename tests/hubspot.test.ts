@@ -100,7 +100,7 @@ describe("createWalkIn", () => {
       "2026-10-06T15:00:00.000Z",
       "42",
     );
-    expect(res).toMatchObject({ id: "55", existing: true });
+    expect(res).toEqual({ id: "55", existing: true });
     const search = calls.find((c) => c.path.endsWith("/search"))!.body as any;
     expect(search.filterGroups[0].filters[0].value).toBe("kevin@example.com");
     const patch = calls.find((c) => c.method === "PATCH")!.body as any;
@@ -113,67 +113,92 @@ describe("createWalkIn", () => {
     routes["POST /crm/v3/objects/contacts"] = () => ({ status: 201, json: { id: "77" } });
     const { createWalkIn } = await import("../src/lib/hubspot");
     const res = await createWalkIn({ firstName: "Ana", lastName: "Li", company: "", email: "" }, "BSP", null, null);
-    expect(res).toMatchObject({ id: "77", existing: false, eventLogged: false });
+    expect(res).toEqual({ id: "77", existing: false });
     const create = calls.find((c) => c.path === "/crm/v3/objects/contacts")!.body as any;
     expect(create.properties).toEqual({ firstname: "Ana", lastname: "Li" });
   });
 });
 
-describe("Custom Events", () => {
-  it("creates the event definitions once and logs check-ins and undos with stable ids", async () => {
-    propsOk();
-    let defsCreated = 0;
-    routes["GET /events/v3/event-definitions/[a-z_]+"] = () => ({ status: 404, json: {} });
-    routes["POST /events/v3/event-definitions"] = (body) => {
-      defsCreated++;
-      return { status: 201, json: { fullyQualifiedName: `pe123_${body.name}` } };
-    };
-    routes["PATCH /crm/v3/objects/contacts/7"] = () => ({ json: {} });
-    routes["POST /events/v3/send"] = () => ({ status: 204 });
+describe("submitAttendance", () => {
+  const people = [
+    { contactId: "1", checkedInAt: "2026-10-06T15:00:00.000Z" },
+    { contactId: "2", checkedInAt: "2026-10-06T15:05:00.000Z", walkIn: true, badgeName: "Kev", badgeCompany: "RV" },
+  ];
 
-    const { setCheckIn } = await import("../src/lib/hubspot");
-    const at = "2026-10-06T15:00:00.000Z";
-    expect(await setCheckIn("7", "BSP", at, { badgeName: "Kev" })).toEqual({ eventLogged: true });
-    expect(await setCheckIn("7", "BSP", at, { badgeName: "Kev" })).toEqual({ eventLogged: true });
-    expect(await setCheckIn("7", "BSP", null)).toEqual({ eventLogged: true });
+  it("creates the segment, syncs membership and logs one timeline event per attendee", async () => {
+    routes["POST /crm/v3/lists/search"] = () => ({ json: { lists: [], hasMore: false } });
+    routes["POST /crm/v3/lists"] = (body) => ({ json: { list: { listId: 900, name: body.name } } });
+    routes["GET /crm/v3/lists/900/memberships"] = () => ({ json: { results: [{ recordId: "2" }, { recordId: "9" }] } });
+    routes["PUT /crm/v3/lists/900/memberships/(add|remove)"] = () => ({ json: {} });
+    routes["GET /events/v3/event-definitions/event_check_in"] = () => ({ status: 404, json: {} });
+    routes["POST /events/v3/event-definitions"] = (body) => ({ json: { fullyQualifiedName: `pe1_${body.name}` } });
+    routes["POST /events/v3/send/batch"] = () => ({ status: 204 });
 
-    expect(defsCreated).toBe(2); // check-in and undo, each once
-    const sends = calls.filter((c) => c.path === "/events/v3/send").map((c) => c.body as any);
-    expect(sends[0]).toMatchObject({
-      eventName: "pe123_event_check_in",
-      objectId: "7",
-      occurredAt: at,
-      properties: { event_name: "BSP", walk_in: "No", badge_name: "Kev" },
+    const { submitAttendance } = await import("../src/lib/hubspot");
+    const res = await submitAttendance("BSP 2026", people);
+
+    expect(res).toEqual({
+      list: { id: "900", name: "BSP 2026 – Attended" },
+      added: 1,
+      removed: 1,
+      eventsLogged: 2,
+      eventError: null,
+      loggedContactIds: ["1", "2"],
     });
-    expect(sends[0].uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(sends[1].uuid).toBe(sends[0].uuid); // a retried sync can't double-log
-    expect(sends[2].eventName).toBe("pe123_event_check_in_undone");
+    expect(calls.find((c) => c.path === "/crm/v3/lists")!.body).toMatchObject({ processingType: "MANUAL", objectTypeId: "0-1" });
+    expect(calls.find((c) => c.path.endsWith("/memberships/add"))!.body).toEqual(["1"]);
+    expect(calls.find((c) => c.path.endsWith("/memberships/remove"))!.body).toEqual(["9"]);
+    const inputs = (calls.find((c) => c.path === "/events/v3/send/batch")!.body as any).inputs;
+    expect(inputs[0]).toMatchObject({
+      eventName: "pe1_event_check_in",
+      objectId: "1",
+      occurredAt: "2026-10-06T15:00:00.000Z",
+      properties: { event_name: "BSP 2026", walk_in: "No" },
+    });
+    expect(inputs[1].properties).toEqual({ event_name: "BSP 2026", walk_in: "Yes", badge_name: "Kev", badge_company: "RV" });
   });
 
-  it("keeps the check-in when the account can't use Custom Events", async () => {
-    propsOk();
-    routes["GET /events/v3/event-definitions/[a-z_]+"] = () => ({ status: 403, json: { message: "no scope" } });
-    routes["PATCH /crm/v3/objects/contacts/7"] = () => ({ json: {} });
+  it("reuses the segment and only logs attendees not logged before", async () => {
+    routes["POST /crm/v3/lists/search"] = () => ({
+      json: { lists: [{ listId: 900, name: "BSP 2026 – Attended", objectTypeId: "0-1", processingType: "MANUAL" }] },
+    });
+    routes["GET /crm/v3/lists/900/memberships"] = () => ({ json: { results: [{ recordId: "1" }, { recordId: "2" }] } });
+    routes["PUT /crm/v3/lists/900/memberships/(add|remove)"] = () => ({ json: {} });
+    routes["GET /events/v3/event-definitions/event_check_in"] = () => ({ json: { fullyQualifiedName: "pe1_event_check_in" } });
+    routes["POST /events/v3/send/batch"] = () => ({ status: 204 });
 
-    const { setCheckIn } = await import("../src/lib/hubspot");
-    const result = await setCheckIn("7", "BSP", "2026-10-06T15:00:00.000Z");
-    expect(result.eventLogged).toBe(false);
-    expect(result.eventError).toMatch(/Custom Events/);
-    expect(calls.some((c) => c.method === "PATCH")).toBe(true);
+    const { submitAttendance } = await import("../src/lib/hubspot");
+    const first = await submitAttendance("BSP 2026", people.slice(0, 1));
+    const second = await submitAttendance("BSP 2026", people, new Set(first.loggedContactIds));
+    expect(calls.some((c) => c.path === "/crm/v3/lists")).toBe(false);
+    // The second submit only logs the newly checked-in contact.
+    const batches = calls.filter((c) => c.path === "/events/v3/send/batch").map((c) => (c.body as any).inputs);
+    expect(batches.map((b) => b.map((i: any) => i.objectId))).toEqual([["1"], ["2"]]);
+    expect(second.loggedContactIds.sort()).toEqual(["1", "2"]);
+    expect(batches[0][0].uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
-  it("logs walk-ins as walk-ins", async () => {
-    propsOk();
-    routes["GET /events/v3/event-definitions/[a-z_]+"] = (_b, url) => ({
-      json: { fullyQualifiedName: `pe123_${url.pathname.split("/").pop()}` },
-    });
-    routes["POST /crm/v3/objects/contacts"] = () => ({ status: 201, json: { id: "88" } });
-    routes["POST /events/v3/send"] = () => ({ status: 204 });
+  it("still updates the segment when the account can't use Custom Events", async () => {
+    routes["POST /crm/v3/lists/search"] = () => ({ json: { lists: [] } });
+    routes["POST /crm/v3/lists"] = (body) => ({ json: { list: { listId: 900, name: body.name } } });
+    routes["GET /crm/v3/lists/900/memberships"] = () => ({ json: { results: [] } });
+    routes["PUT /crm/v3/lists/900/memberships/add"] = () => ({ json: {} });
+    routes["GET /events/v3/event-definitions/event_check_in"] = () => ({ status: 403, json: {} });
 
-    const { createWalkIn } = await import("../src/lib/hubspot");
-    const res = await createWalkIn({ firstName: "Ana", lastName: "", company: "", email: "" }, "BSP", "2026-10-06T15:00:00.000Z", null);
-    expect(res).toMatchObject({ id: "88", eventLogged: true });
-    const send = calls.find((c) => c.path === "/events/v3/send")!.body as any;
-    expect(send.properties.walk_in).toBe("Yes");
+    const { submitAttendance } = await import("../src/lib/hubspot");
+    const res = await submitAttendance("BSP 2026", people);
+    expect(res.added).toBe(2);
+    expect(res.eventsLogged).toBe(0);
+    expect(res.eventError).toMatch(/Custom Events/);
+  });
+});
+
+describe("live check-ins", () => {
+  it("only touch the reversible properties", async () => {
+    routes["GET /crm/v3/properties/contacts/[a-z_]+"] = () => ({ json: {} });
+    routes["PATCH /crm/v3/objects/contacts/7"] = () => ({ json: {} });
+    const { setCheckIn } = await import("../src/lib/hubspot");
+    await setCheckIn("7", "BSP", "2026-10-06T15:00:00.000Z");
+    expect(calls.some((c) => c.path.startsWith("/events/"))).toBe(false);
   });
 });

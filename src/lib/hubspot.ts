@@ -2,7 +2,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { Attendee, Segment, WalkInInput } from "./types";
 
-const BASE = "https://api.hubapi.com";
+// HUBSPOT_API_BASE exists only for local testing against a stand-in API.
+const BASE = process.env.HUBSPOT_API_BASE || "https://api.hubapi.com";
 const CONTACT_OBJECT_TYPE = "0-1";
 
 export const CHECKIN_EVENT_PROP = process.env.HUBSPOT_CHECKIN_EVENT_PROPERTY || "event_check_in_name";
@@ -231,27 +232,17 @@ function checkInProperties(eventName: string, at: string | null) {
     : { [CHECKIN_EVENT_PROP]: "", [CHECKIN_TIME_PROP]: "" };
 }
 
-export type CheckInDetails = { walkIn?: boolean; badgeName?: string; badgeCompany?: string };
-export type EventLogResult = { eventLogged: boolean; eventError?: string };
-
 /**
- * Records a check-in (or, with `at: null`, an undo) on the contact: the two
- * quick-filter properties, plus a Custom Event on the contact's timeline.
+ * Records a check-in (or, with `at: null`, clears it) on the contact's two
+ * quick-filter properties. Fully reversible: the permanent attendance record
+ * (segment + Custom Events) is written only when staff submit the event.
  */
-export async function setCheckIn(
-  contactId: string,
-  eventName: string,
-  at: string | null,
-  details: CheckInDetails = {},
-): Promise<EventLogResult> {
+export async function setCheckIn(contactId: string, eventName: string, at: string | null): Promise<void> {
   await ensureCheckInProperties();
   await hs(`/crm/v3/objects/contacts/${encodeURIComponent(contactId)}`, {
     method: "PATCH",
     body: JSON.stringify({ properties: checkInProperties(eventName, at) }),
   });
-  return at
-    ? logEvent(CHECKIN_EVENT, contactId, at, eventName, details)
-    : logEvent(UNDO_EVENT, contactId, new Date().toISOString(), eventName, details);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,30 +300,24 @@ export async function createWalkIn(
       body: JSON.stringify([id]),
     }).catch(() => undefined);
   }
-  const event = at ? await logEvent(CHECKIN_EVENT, id!, at, eventName, { walkIn: true }) : { eventLogged: false };
-  return { id: id!, existing, ...event };
+  return { id: id!, existing };
 }
 
 // ---------------------------------------------------------------------------
-// Custom Events (contact timeline, lists, workflows, reports)
+// Submitting attendance (after the event)
 //
-// Needs an Enterprise hub and the analytics.behavioral_events.send and
-// behavioral_events.event_definitions.read_write scopes. Without them,
-// check-ins still save to the properties above; the app reports the problem
-// instead of blocking check-in.
+// Creates a static segment of everyone who checked in and logs a
+// "Checked in at event" Custom Event on each of their timelines. Events can't
+// be edited or deleted in HubSpot, which is why this waits until staff submit.
+// Resubmitting is safe: the segment is brought in line and occurrence ids are
+// derived from contact + check-in time, so nobody is logged twice.
+// Custom Events need an Enterprise hub and the analytics.behavioral_events.send
+// and behavioral_events.event_definitions.read_write scopes.
 
-type EventDef = { name: string; label: string; description: string };
-
-export const CHECKIN_EVENT: EventDef = {
+export const CHECKIN_EVENT = {
   name: "event_check_in",
   label: "Checked in at event",
-  description: "Logged by the event check-in app when someone is checked in and their badge prints.",
-};
-
-export const UNDO_EVENT: EventDef = {
-  name: "event_check_in_undone",
-  label: "Event check-in undone",
-  description: "Logged by the event check-in app when staff undo a check-in.",
+  description: "Logged by the event check-in app when staff submit an event's attendance.",
 };
 
 const EVENT_PROPERTIES = [
@@ -347,66 +332,117 @@ const EVENT_PROPERTIES = [
   },
 ];
 
-const definitions = new Map<string, Promise<string>>();
+let definition: Promise<string> | null = null;
 
-/** Returns the event's fully qualified name, creating the definition the first time. */
-function eventDefinition(def: EventDef): Promise<string> {
-  let pending = definitions.get(def.name);
-  if (!pending) {
-    pending = (async () => {
-      try {
-        const found = await hs<{ fullyQualifiedName: string }>(`/events/v3/event-definitions/${def.name}`);
-        return found.fullyQualifiedName;
-      } catch (e) {
-        if (!(e instanceof HubSpotError) || e.status !== 404) throw e;
-      }
-      const created = await hs<{ fullyQualifiedName: string }>("/events/v3/event-definitions", {
-        method: "POST",
-        body: JSON.stringify({ ...def, primaryObject: "CONTACT", propertyDefinitions: EVENT_PROPERTIES }),
-      });
-      return created.fullyQualifiedName;
-    })();
-    definitions.set(def.name, pending);
-    pending.catch(() => definitions.delete(def.name));
-  }
-  return pending;
+/** The event's fully qualified name, creating the definition the first time. */
+function checkInEventName(): Promise<string> {
+  definition ??= (async () => {
+    try {
+      const found = await hs<{ fullyQualifiedName: string }>(`/events/v3/event-definitions/${CHECKIN_EVENT.name}`);
+      return found.fullyQualifiedName;
+    } catch (e) {
+      if (!(e instanceof HubSpotError) || e.status !== 404) throw e;
+    }
+    const created = await hs<{ fullyQualifiedName: string }>("/events/v3/event-definitions", {
+      method: "POST",
+      body: JSON.stringify({ ...CHECKIN_EVENT, primaryObject: "CONTACT", propertyDefinitions: EVENT_PROPERTIES }),
+    });
+    return created.fullyQualifiedName;
+  })().catch((e) => {
+    definition = null;
+    throw e;
+  });
+  return definition;
 }
 
-/** Same inputs give the same id, so a retried sync can't log the event twice. */
-function occurrenceId(...parts: string[]): string {
+/** Same inputs give the same id, so resubmitting can't log an event twice. */
+export function occurrenceId(...parts: string[]): string {
   const h = createHash("sha256").update(parts.join("|")).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-async function logEvent(
-  def: EventDef,
-  contactId: string,
-  occurredAt: string,
+async function findOrCreateStaticList(name: string): Promise<{ id: string; name: string }> {
+  const res = await hs<ListSearchResponse>("/crm/v3/lists/search", {
+    method: "POST",
+    body: JSON.stringify({ query: name, count: 100 }),
+  });
+  const match = res.lists?.find((l) => l.name === name && l.objectTypeId === CONTACT_OBJECT_TYPE);
+  if (match) return { id: String(match.listId), name };
+  const created = await hs<{ list: { listId: string | number; name: string } }>("/crm/v3/lists", {
+    method: "POST",
+    body: JSON.stringify({ name, objectTypeId: CONTACT_OBJECT_TYPE, processingType: "MANUAL" }),
+  });
+  return { id: String(created.list.listId), name: created.list.name };
+}
+
+export type AttendanceRecord = {
+  contactId: string;
+  checkedInAt: string;
+  walkIn?: boolean;
+  badgeName?: string;
+  badgeCompany?: string;
+};
+
+export type SubmitResult = {
+  list: { id: string; name: string };
+  added: number;
+  removed: number;
+  eventsLogged: number;
+  eventError: string | null;
+};
+
+/** `alreadyLogged`: contacts whose event went out on an earlier submit. */
+export async function submitAttendance(
   eventName: string,
-  details: CheckInDetails,
-): Promise<EventLogResult> {
-  try {
-    const fqn = await eventDefinition(def);
-    const properties: Record<string, string> = { event_name: eventName, walk_in: details.walkIn ? "Yes" : "No" };
-    if (details.badgeName) properties.badge_name = details.badgeName;
-    if (details.badgeCompany !== undefined) properties.badge_company = details.badgeCompany;
-    await hs("/events/v3/send", {
-      method: "POST",
-      body: JSON.stringify({
-        eventName: fqn,
-        objectId: contactId,
-        occurredAt: new Date(occurredAt).toISOString(),
-        properties,
-        uuid: occurrenceId(def.name, contactId, occurredAt),
-      }),
-    });
-    return { eventLogged: true };
-  } catch (e) {
-    // Missing plan or scopes, or HubSpot rejecting the event itself: keep
-    // checking people in and tell staff, rather than retrying forever.
-    if (e instanceof HubSpotError && [400, 401, 403, 404].includes(e.status)) {
-      return { eventLogged: false, eventError: `HubSpot Custom Events: ${e.message}` };
-    }
-    throw e;
+  attendees: AttendanceRecord[],
+  alreadyLogged: ReadonlySet<string> = new Set(),
+): Promise<SubmitResult & { loggedContactIds: string[] }> {
+  const list = await findOrCreateStaticList(`${eventName} – Attended`);
+
+  // Bring the segment in line with who actually checked in.
+  const want = new Set(attendees.map((a) => a.contactId));
+  const have = new Set(await listMemberIds(list.id));
+  const toAdd = [...want].filter((id) => !have.has(id));
+  const toRemove = [...have].filter((id) => !want.has(id));
+  for (const batch of chunk(toAdd, 500)) {
+    await hs(`/crm/v3/lists/${list.id}/memberships/add`, { method: "PUT", body: JSON.stringify(batch) });
   }
+  for (const batch of chunk(toRemove, 500)) {
+    await hs(`/crm/v3/lists/${list.id}/memberships/remove`, { method: "PUT", body: JSON.stringify(batch) });
+  }
+
+  // Timeline events. Missing plan or scopes shouldn't undo the segment work.
+  let eventsLogged = 0;
+  let eventError: string | null = null;
+  const logged = new Set(alreadyLogged);
+  const toLog = attendees.filter((a) => !logged.has(a.contactId));
+  try {
+    const fqn = toLog.length ? await checkInEventName() : "";
+    for (const batch of chunk(toLog, 500)) {
+      await hs("/events/v3/send/batch", {
+        method: "POST",
+        body: JSON.stringify({
+          inputs: batch.map((a) => ({
+            eventName: fqn,
+            objectId: a.contactId,
+            occurredAt: new Date(a.checkedInAt).toISOString(),
+            uuid: occurrenceId(CHECKIN_EVENT.name, a.contactId, a.checkedInAt),
+            properties: {
+              event_name: eventName,
+              walk_in: a.walkIn ? "Yes" : "No",
+              ...(a.badgeName ? { badge_name: a.badgeName } : {}),
+              ...(a.badgeCompany !== undefined ? { badge_company: a.badgeCompany } : {}),
+            },
+          })),
+        }),
+      });
+      eventsLogged += batch.length;
+      batch.forEach((a) => logged.add(a.contactId));
+    }
+  } catch (e) {
+    if (!(e instanceof HubSpotError) || ![400, 401, 403, 404].includes(e.status)) throw e;
+    eventError = `Custom Events weren't logged: ${e.message}`;
+  }
+
+  return { list, added: toAdd.length, removed: toRemove.length, eventsLogged, eventError, loggedContactIds: [...logged] };
 }

@@ -81,6 +81,11 @@ export function EventsList() {
                         ) : !e.finishedAt ? (
                           <span className="tag">Not finished</span>
                         ) : null}
+                        {e.submittedAt ? (
+                          <span className="tag">Submitted to HubSpot</span>
+                        ) : e.finishedAt ? (
+                          <span className="tag tag--accent">Ready to submit</span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="events__stats">

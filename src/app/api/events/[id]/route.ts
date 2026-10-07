@@ -59,6 +59,9 @@ export const PUT = handle(async (request: Request, ctx: Ctx) => {
     attendees: body.attendees.map(attendee),
   };
   const redis = requireStorage();
+  // The station's autosave doesn't know about the HubSpot submission; keep it.
+  const previous = await redis.get<EventRecord>(eventKey(id));
+  if (previous?.submission) event.submission = previous.submission;
   await redis.set(eventKey(id), event);
   await redis.hset(SUMMARIES_KEY, { [id]: summarizeEvent(event) });
   return NextResponse.json({ ok: true, updatedAt: event.updatedAt });

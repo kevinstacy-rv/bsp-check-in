@@ -47,6 +47,19 @@ export type EventRecord = {
   updatedAt: string;
   finishedAt: string | null;
   attendees: Attendee[];
+  /** Set by "Submit attendance to HubSpot". */
+  submission?: Submission;
+};
+
+export type Submission = {
+  submittedAt: string;
+  listId: string;
+  listName: string;
+  attendees: number;
+  eventsLogged: number;
+  eventError: string | null;
+  /** Contacts whose timeline event is already logged, so resubmits skip them. */
+  loggedContactIds?: string[];
 };
 
 export type EventSummary = {
@@ -60,6 +73,7 @@ export type EventSummary = {
   checkedIn: number;
   walkIns: number;
   corrections: number;
+  submittedAt: string | null;
 };
 
 export function summarizeEvent(e: EventRecord): EventSummary {
@@ -74,6 +88,7 @@ export function summarizeEvent(e: EventRecord): EventSummary {
     checkedIn: e.attendees.filter((a) => a.checkedInAt).length,
     walkIns: e.attendees.filter((a) => a.walkIn).length,
     corrections: e.attendees.filter(isCorrected).length,
+    submittedAt: e.submission?.submittedAt ?? null,
   };
 }
 

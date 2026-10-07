@@ -1,13 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { saveEvent } from "@/lib/events";
 import { searchAttendees } from "@/lib/search";
 import { getState, loadEvent, useStore } from "@/lib/store";
 import { startSync } from "@/lib/sync";
-import { badgeContent, fullName, isCorrected, summarizeEvent, type Attendee, type EventRecord } from "@/lib/types";
+import {
+  badgeContent,
+  fullName,
+  isCorrected,
+  summarizeEvent,
+  type Attendee,
+  type EventRecord,
+  type Submission,
+} from "@/lib/types";
 import { TopBar } from "./TopBar";
 
 type Filter = "all" | "in" | "no-show" | "walk-in" | "corrected";
@@ -15,6 +23,8 @@ type Filter = "all" | "in" | "no-show" | "walk-in" | "corrected";
 const dateTime = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function csvCell(v: string) {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
@@ -57,6 +67,9 @@ export function EventDetail({ id }: { id: string }) {
   const [filter, setFilter] = useState<Filter>("all");
   const currentId = useStore((s) => s.eventId);
   const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const highlightSubmit = useSearchParams().get("submit") === "1";
 
   useEffect(() => {
     startSync();
@@ -124,6 +137,51 @@ export function EventDetail({ id }: { id: string }) {
     router.push(mode === "copy" ? "/setup" : "/");
   }
 
+  async function submitToHubSpot() {
+    if (!event || !summary) return;
+    const s = getState();
+    if (s.eventId === event.id) {
+      // Submit what HubSpot will actually agree with: everything synced and saved.
+      if (s.outbox.length) {
+        setError("This computer still has check-ins that haven't reached HubSpot. Get online and let them sync, then submit.");
+        return;
+      }
+      const saved = await saveEvent();
+      if (!saved.ok) {
+        setError(saved.error);
+        return;
+      }
+    }
+    const again = Boolean(event.submission);
+    const message = again
+      ? `Submit again? The "${event.submission!.listName}" segment is updated to match the ${summary.checkedIn} people checked in now, and anyone newly checked in gets a "Checked in at event" on their timeline. Events already logged stay on timelines.`
+      : `Submit ${summary.checkedIn} attendees to HubSpot?\n\nThis creates the segment "${event.name} – Attended" and logs "Checked in at event" on each attendee's timeline. Timeline events can't be removed later, so make sure check-in is done.`;
+    if (!confirm(message)) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/events/${encodeURIComponent(id)}/submit`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `Submit failed (${res.status})`);
+      const submission = data.submission as Submission;
+      setEvent({ ...event, submission });
+      setNotice(
+        `Submitted. "${submission.listName}" now has ${submission.attendees} ${submission.attendees === 1 ? "person" : "people"}` +
+          (data.added || data.removed ? ` (${data.added} added, ${data.removed} removed)` : "") +
+          (submission.eventError
+            ? "."
+            : data.eventsLogged
+              ? `, and ${plural(data.eventsLogged, "new timeline event")} logged.`
+              : ". No new timeline events were needed."),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function remove() {
     if (!event || !confirm(`Delete "${event.name}" from Past events? This can't be undone. HubSpot isn't changed.`)) return;
     const res = await fetch(`/api/events/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -140,6 +198,7 @@ export function EventDetail({ id }: { id: string }) {
         </Link>
 
         {error && <div className="banner banner--bad">{error}</div>}
+        {notice && <div className="banner">{notice}</div>}
 
         {event && summary && (
           <>
@@ -180,6 +239,42 @@ export function EventDetail({ id }: { id: string }) {
                 </button>
               </div>
             </div>
+
+            <section className={`card submit-card ${highlightSubmit && !event.submission ? "submit-card--focus" : ""}`}>
+              <div className="row-inline" style={{ justifyContent: "space-between" }}>
+                <div className="row-inline" style={{ gap: 10 }}>
+                  <span className={`dot ${event.submission ? "dot--ok" : "dot--warn"}`} />
+                  <span className="h5">
+                    {event.submission ? "Attendance submitted to HubSpot" : "Attendance not submitted to HubSpot yet"}
+                  </span>
+                </div>
+                <button className="rv-btn rv-btn--primary" onClick={submitToHubSpot} disabled={submitting || !summary.checkedIn}>
+                  {submitting && <span className="spinner" />}
+                  {event.submission ? "Submit again" : "Submit attendance to HubSpot"}
+                </button>
+              </div>
+              {event.submission ? (
+                <p className="tiny muted" style={{ margin: 0, lineHeight: 1.5 }}>
+                  {dateTime(event.submission.submittedAt)} · {plural(event.submission.attendees, "attendee")} in the
+                  segment <strong>{event.submission.listName}</strong>
+                  {event.submission.eventError
+                    ? null
+                    : ` · "Checked in at event" on ${plural(event.submission.eventsLogged, "timeline")}`}
+                  . Submit again after any late changes to update the segment.
+                </p>
+              ) : (
+                <p className="tiny muted" style={{ margin: 0, lineHeight: 1.5 }}>
+                  When check-in is done, submit to create the segment <strong>{event.name} – Attended</strong> and log
+                  &ldquo;Checked in at event&rdquo; on each attendee&apos;s timeline. Until then, everything in HubSpot can
+                  still be undone.
+                </p>
+              )}
+              {event.submission?.eventError && (
+                <p className="tiny" style={{ margin: 0, color: "var(--accent-secondary)" }}>
+                  The segment is up to date, but timeline events weren&apos;t logged: {event.submission.eventError}
+                </p>
+              )}
+            </section>
 
             <div className="kpis">
               <div className="kpi">

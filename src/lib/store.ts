@@ -15,17 +15,7 @@ import {
 } from "./types";
 
 export type Op =
-  | {
-      id: string;
-      kind: "checkin";
-      contactId: string;
-      eventName: string;
-      at: string;
-      /** Extra detail for the HubSpot Custom Event. */
-      walkIn?: boolean;
-      badgeName?: string;
-      badgeCompany?: string;
-    }
+  | { id: string; kind: "checkin"; contactId: string; eventName: string; at: string }
   | { id: string; kind: "undo"; contactId: string; eventName: string }
   | {
       id: string;
@@ -64,8 +54,6 @@ type Runtime = {
   /** Last time the paired phone polled for the preview (ms epoch). */
   phoneSeenAt: number | null;
   previewError: string | null;
-  /** Set when check-ins save but HubSpot won't take the Custom Event. */
-  hubspotEventError: string | null;
 };
 
 export type State = Persisted & Runtime;
@@ -90,7 +78,6 @@ const initial: State = {
   syncError: null,
   phoneSeenAt: null,
   previewError: null,
-  hubspotEventError: null,
 };
 
 let state: State = initial;
@@ -137,7 +124,7 @@ function migratePrinter(saved: Partial<PrinterSettings> | undefined): PrinterSet
 }
 
 function persist() {
-  const { online: _o, syncing: _s, syncError: _e, phoneSeenAt: _p, previewError: _pe, hubspotEventError: _he, ...rest } = state;
+  const { online: _o, syncing: _s, syncError: _e, phoneSeenAt: _p, previewError: _pe, ...rest } = state;
   try {
     localStorage.setItem(KEY, JSON.stringify(rest));
   } catch {
@@ -190,17 +177,7 @@ export function checkIn(id: string): Attendee | undefined {
       return { roster, outbox: s.outbox.map((o) => (o.kind === "walkin" && o.tempId === id ? { ...o, at } : o)) };
     }
     const outbox = s.outbox.filter((o) => !(o.kind !== "walkin" && o.contactId === id));
-    const a = s.roster.find((x) => x.id === id);
-    outbox.push({
-      id: uid(),
-      kind: "checkin",
-      contactId: id,
-      eventName: s.eventName,
-      at,
-      ...(a?.walkIn ? { walkIn: true } : {}),
-      ...(a?.badgeName !== undefined ? { badgeName: a.badgeName } : {}),
-      ...(a?.badgeCompany !== undefined ? { badgeCompany: a.badgeCompany } : {}),
-    });
+    outbox.push({ id: uid(), kind: "checkin", contactId: id, eventName: s.eventName, at });
     return { roster, outbox };
   });
   return getState().roster.find((a) => a.id === id);

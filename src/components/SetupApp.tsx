@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { saveEvent as saveEventRecord } from "@/lib/events";
 import { ensureEvent, getState, importRoster, setState, updatePrinter, useStore } from "@/lib/store";
@@ -21,6 +22,7 @@ const when = (iso: string) =>
   new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
 
 export function SetupApp() {
+  const router = useRouter();
   const eventName = useStore((s) => s.eventName);
   const segment = useStore((s) => s.segment);
   const roster = useStore((s) => s.roster);
@@ -111,14 +113,19 @@ export function SetupApp() {
       push({ tone: "bad", message: `${outbox.length} changes haven't reached HubSpot yet. Get back online before finishing.` });
       return;
     }
-    if (!confirm("Finish this event? It's saved to Past events, then cleared from this computer. HubSpot isn't changed."))
+    if (
+      !confirm(
+        "Finish this event? It's saved to Past events and cleared from this computer. Next you'll submit the attendance to HubSpot.",
+      )
+    )
       return;
+    const id = getState().eventId;
     setFinishing(true);
     const result = await saveEventRecord({ finished: true });
     setFinishing(false);
     if (result.ok) {
       clearStation();
-      push({ tone: "ok", message: "Event saved to Past events" });
+      if (id) router.push(`/events/${id}?submit=1`);
       return;
     }
     if (
@@ -343,7 +350,7 @@ export function SetupApp() {
               <p className="tiny subtle" style={{ margin: 0 }}>
                 The event saves to Past events automatically while you work
                 {eventSavedAt ? <> (last saved {when(eventSavedAt)})</> : null}. When it&apos;s over, finish it to save the
-                final record and clear the attendee list from this computer. Nothing in HubSpot changes.
+                final record and clear this computer, then submit the attendance to HubSpot from the event&apos;s page.
               </p>
               <div>
                 <button className="rv-btn rv-btn--secondary" onClick={finishEvent} disabled={finishing || !roster.length}>

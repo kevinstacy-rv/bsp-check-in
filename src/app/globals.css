@@ -938,3 +938,11 @@ button.pill {
 .setup-steps li + li {
   margin-top: 6px;
 }
+
+.submit-card {
+  margin-bottom: var(--space-md);
+  gap: 10px;
+}
+.submit-card--focus {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
