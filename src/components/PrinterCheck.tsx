@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { printLabel } from "@/lib/print";
 import { setState, useStore } from "@/lib/store";
+import { LABEL_SIZES } from "@/lib/types";
 import type { LabelContent } from "@/lib/label";
 
 export const QL800_DRIVER_URL = "https://support.brother.com/g/b/downloadtop.aspx?c=us&lang=en&prod=lpql800eus";
@@ -27,6 +28,8 @@ export function PrinterCheck({
   onToast: (tone: "ok" | "bad", message: string) => void;
 }) {
   const verifiedAt = useStore((s) => s.printerVerifiedAt);
+  const roll = useStore((s) => s.printer.label);
+  const paper = (LABEL_SIZES[roll] ?? LABEL_SIZES["dk-1234"]).paper;
   const [step, setStep] = useState<Step>("idle");
   const [dialogShown, setDialogShown] = useState(false);
   const [showSteps, setShowSteps] = useState(false);
@@ -38,8 +41,12 @@ export function PrinterCheck({
     setMac(isMac());
   }, []);
 
-  // A separate Chrome profile keeps kiosk printing off everyday browsing.
-  const launchCommand = `open -na "Google Chrome" --args --kiosk-printing --user-data-dir="$HOME/Library/Application Support/CheckInChrome" ${origin}`;
+  // A separate Chrome profile keeps kiosk printing off everyday browsing. Both
+  // commands use the same profile: Chrome remembers the paper size chosen in
+  // the setup window and kiosk printing reuses it.
+  const profile = `--user-data-dir="$HOME/Library/Application Support/CheckInChrome"`;
+  const setupCommand = `open -na "Google Chrome" --args ${profile} ${origin}/setup#printer`;
+  const launchCommand = `open -na "Google Chrome" --args --kiosk-printing ${profile} ${origin}`;
   const stepsOpen = !verifiedAt || showSteps || step === "failed";
 
   async function test() {
@@ -145,15 +152,15 @@ export function PrinterCheck({
               is seated with the cover closed.
             </li>
             <li>
-              <strong>Wrong size or shrunk?</strong> Open the window without <code>--kiosk-printing</code>, print from
-              the dialog with the QL-800, your roll&apos;s paper size, margins None and scale 100%, then relaunch.
+              <strong>&ldquo;Roll doesn&apos;t match&rdquo;, wrong size or shrunk?</strong> Chrome is using the wrong paper
+              size. Do the one-time paper setup in steps 3–4 below, choosing <strong>{paper}</strong>.
             </li>
           </ul>
         </div>
       )}
 
-      {stepsOpen && step !== "failed" && (
-        <ol className="tiny muted" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+      {stepsOpen && (
+        <ol className="tiny muted setup-steps">
           <li>
             <a href={QL800_DRIVER_URL} target="_blank" rel="noreferrer">
               Download the QL-800 driver
@@ -162,27 +169,41 @@ export function PrinterCheck({
             default.
           </li>
           <li>Turn off Editor Lite: hold its button on the printer until the green light goes out.</li>
-          <li>Open Terminal and run the command below. It opens this site in its own Chrome window that prints without asking.</li>
-          <li>In that window, sign in and print a test badge.</li>
+          <li>
+            <strong>One-time paper setup.</strong> Quit Chrome, then run this in Terminal. It opens the check-in Chrome
+            window <em>with</em> the print dialog:
+            <CopyCommand command={setupCommand} onToast={onToast} />
+          </li>
+          <li>
+            Sign in, press <strong>Print a test badge</strong>, and in the dialog choose the QL-800. Under{" "}
+            <strong>More settings</strong>, set Paper size to <strong>{paper}</strong>, Margins to{" "}
+            <strong>None</strong> and Scale to <strong>Default</strong>, then Print. Chrome remembers these for this window.
+          </li>
+          <li>
+            Quit Chrome and open the event window, which prints without asking:
+            <CopyCommand command={launchCommand} onToast={onToast} />
+          </li>
         </ol>
       )}
+    </div>
+  );
+}
 
-      {stepsOpen && (
-        <div className="row-inline" style={{ flexWrap: "nowrap" }}>
-          <code className="code">{launchCommand}</code>
-          <button
-            className="rv-btn rv-btn--sm rv-btn--outline"
-            onClick={() =>
-              navigator.clipboard
-                .writeText(launchCommand)
-                .then(() => onToast("ok", "Command copied"))
-                .catch(() => onToast("bad", "Couldn't copy. Select the command and copy it."))
-            }
-          >
-            Copy
-          </button>
-        </div>
-      )}
+function CopyCommand({ command, onToast }: { command: string; onToast: (tone: "ok" | "bad", message: string) => void }) {
+  return (
+    <div className="row-inline" style={{ flexWrap: "nowrap", margin: "6px 0 4px" }}>
+      <code className="code">{command}</code>
+      <button
+        className="rv-btn rv-btn--sm rv-btn--outline"
+        onClick={() =>
+          navigator.clipboard
+            .writeText(command)
+            .then(() => onToast("ok", "Command copied"))
+            .catch(() => onToast("bad", "Couldn't copy. Select the command and copy it."))
+        }
+      >
+        Copy
+      </button>
     </div>
   );
 }

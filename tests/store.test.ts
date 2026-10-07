@@ -108,3 +108,16 @@ describe("loadEvent", () => {
     expect(st.outbox).toEqual([]);
   });
 });
+
+describe("printer settings migration", () => {
+  it("moves stations saved with the old DK-1202 default onto DK-1234", async () => {
+    vi.resetModules();
+    const saved = { printer: { label: "dk-1202", widthMm: 100, heightMm: 62, offsetXMm: 0, offsetYMm: 0 } };
+    vi.stubGlobal("window", { addEventListener: () => undefined });
+    vi.stubGlobal("navigator", { onLine: true });
+    vi.stubGlobal("localStorage", { getItem: () => JSON.stringify(saved), setItem: () => undefined });
+    const s = await import("../src/lib/store");
+    expect(s.getState().printer).toMatchObject({ label: "dk-1234", widthMm: 86, heightMm: 60, flip: false });
+    vi.unstubAllGlobals();
+  });
+});

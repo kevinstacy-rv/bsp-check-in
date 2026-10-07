@@ -94,11 +94,11 @@ export const EVENT_ID_RE = /^[a-z0-9]{8,40}$/;
 
 /** Brother DK label rolls the QL-800 takes. Sizes are as the badge reads (landscape). */
 export const LABEL_SIZES = {
-  "dk-1234": { name: "DK-1234 name badge · 86 × 60 mm", widthMm: 86, heightMm: 60 },
-  "dk-1202": { name: "DK-1202 shipping label · 100 × 62 mm", widthMm: 100, heightMm: 62 },
-  "dk-2205": { name: "DK-2205 continuous 62 mm · cut to length", widthMm: 100, heightMm: 62, continuous: true },
-  "dk-1201": { name: "DK-1201 address label · 90 × 29 mm", widthMm: 90, heightMm: 29 },
-  custom: { name: "Custom size", widthMm: 100, heightMm: 62 },
+  "dk-1234": { name: "DK-1234 name badge · 86 × 60 mm", widthMm: 86, heightMm: 60, paper: "60mm x 86mm" },
+  "dk-1202": { name: "DK-1202 shipping label · 100 × 62 mm", widthMm: 100, heightMm: 62, paper: "62mm x 100mm" },
+  "dk-2205": { name: "DK-2205 continuous 62 mm · cut to length", widthMm: 100, heightMm: 62, continuous: true, paper: "62mm" },
+  "dk-1201": { name: "DK-1201 address label · 90 × 29 mm", widthMm: 90, heightMm: 29, paper: "29mm x 90mm" },
+  custom: { name: "Custom size", widthMm: 100, heightMm: 62, paper: "your roll's size" },
 } as const;
 
 export type LabelSizeId = keyof typeof LABEL_SIZES;

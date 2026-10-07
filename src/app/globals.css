@@ -930,3 +930,11 @@ button.pill {
     text-align: left;
   }
 }
+.setup-steps {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+.setup-steps li + li {
+  margin-top: 6px;
+}

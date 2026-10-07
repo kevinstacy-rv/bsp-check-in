@@ -100,7 +100,7 @@ function load() {
   state = {
     ...initial,
     ...saved,
-    printer: { ...DEFAULT_PRINTER, ...saved.printer },
+    printer: migratePrinter(saved.printer),
     online: navigator.onLine,
   };
   // Keep a second tab (e.g. setup open beside check-in) in step.
@@ -109,6 +109,18 @@ function load() {
     state = { ...state, ...readStorage() };
     listeners.forEach((l) => l());
   });
+}
+
+/**
+ * Stations saved before the DK-1234 option existed still carry the old
+ * DK-1202 default, which doesn't match the name-badge roll we use.
+ */
+function migratePrinter(saved: Partial<PrinterSettings> | undefined): PrinterSettings {
+  const merged = { ...DEFAULT_PRINTER, ...saved };
+  if (saved && saved.flip === undefined && saved.label === "dk-1202") {
+    return { ...merged, label: "dk-1234", widthMm: 86, heightMm: 60 };
+  }
+  return merged;
 }
 
 function persist() {
