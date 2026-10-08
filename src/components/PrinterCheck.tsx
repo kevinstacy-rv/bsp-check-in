@@ -29,7 +29,9 @@ export function PrinterCheck({
 }) {
   const verifiedAt = useStore((s) => s.printerVerifiedAt);
   const roll = useStore((s) => s.printer.label);
-  const paper = (LABEL_SIZES[roll] ?? LABEL_SIZES["dk-1234"]).paper;
+  const preset = LABEL_SIZES[roll] ?? LABEL_SIZES["dk-1234"];
+  const paper = preset.paper;
+  const twoColor = "twoColor" in preset;
   const [step, setStep] = useState<Step>("idle");
   const [dialogShown, setDialogShown] = useState(false);
   const [showSteps, setShowSteps] = useState(false);
@@ -178,6 +180,16 @@ export function PrinterCheck({
             Sign in, press <strong>Print a test badge</strong>, and in the dialog choose the QL-800. Under{" "}
             <strong>More settings</strong>, set Paper size to <strong>{paper}</strong>, Margins to{" "}
             <strong>None</strong> and Scale to <strong>Default</strong>, then Print. Chrome remembers these for this window.
+            {"continuous" in preset && (
+              <> On a continuous roll the printer cuts each badge to the length set under Label roll.</>
+            )}
+            {twoColor && (
+              <>
+                {" "}
+                Red prints only in the driver&apos;s black-and-red mode; if the red parts come out black, look for the
+                2-color (black/red) option in the dialog&apos;s printer settings.
+              </>
+            )}
           </li>
           <li>
             Quit Chrome and open the event window, which prints without asking:

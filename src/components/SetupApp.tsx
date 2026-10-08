@@ -322,6 +322,12 @@ export function SetupApp() {
                 <input type="checkbox" checked={printer.flip} onChange={(e) => updatePrinter({ flip: e.target.checked })} />
                 <span>Badge comes out upside down? Flip it</span>
               </label>
+              {"twoColor" in preset && (
+                <label className="check">
+                  <input type="checkbox" checked={printer.red} onChange={(e) => updatePrinter({ red: e.target.checked })} />
+                  <span>Print the ProPresenter icon and event mark in red</span>
+                </label>
+              )}
             </section>
 
             <section className="section">

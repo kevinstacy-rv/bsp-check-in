@@ -46,7 +46,7 @@ Without it, check-in and printing still work; Past events and Phone preview expl
 
 1. Install the **Brother QL-800 driver for macOS** from [support.brother.com](https://support.brother.com). Plug the printer in over USB, add it in **System Settings → Printers & Scanners**, and make it the default printer.
 2. **Turn off Editor Lite**: hold the Editor Lite button on the printer until its green light goes out. While Editor Lite is on, the QL-800 appears as a USB drive instead of a printer.
-3. Load the label roll and pick the matching **Label roll** on the Setup page. The default is DK-1234 name badges (86 × 60 mm). The badge is sent as a portrait page matching the driver's paper size and turned to fit; if it comes out upside down, tick **Flip it**.
+3. Load the label roll and pick the matching **Label roll** on the Setup page. The default is DK-1234 name badges (86 × 60 mm). DK-2251 (continuous 62 mm, black and red) is supported too: set the badge length, and the ProPresenter icon and event mark print in red (turn that off on the Setup page if you prefer all black). Red needs the driver's black/red mode; if red parts print black, pick the 2-color option in the print dialog's printer settings. The badge is sent as a portrait page matching the driver's paper size and turned to fit; if it comes out upside down, tick **Flip it**.
 4. **One-time paper setup.** In kiosk mode Chrome doesn't choose the paper size from the page; it reuses the paper size last picked in that Chrome profile, or the driver's default (which doesn't match DK-1234, so the printer says the roll doesn't match). Set it once:
    - Quit Chrome and open the check-in profile **with** the print dialog (replace the URL with your Vercel address):
 

@@ -113,6 +113,14 @@ export const LABEL_SIZES = {
   "dk-1202": { name: "DK-1202 shipping label · 100 × 62 mm", widthMm: 100, heightMm: 62, paper: "62mm x 100mm" },
   "dk-2205": { name: "DK-2205 continuous 62 mm · cut to length", widthMm: 100, heightMm: 62, continuous: true, paper: "62mm" },
   "dk-1201": { name: "DK-1201 address label · 90 × 29 mm", widthMm: 90, heightMm: 29, paper: "29mm x 90mm" },
+  "dk-2251": {
+    name: "DK-2251 continuous 62 mm · black & red",
+    widthMm: 86,
+    heightMm: 62,
+    continuous: true,
+    twoColor: true,
+    paper: "62mm",
+  },
   custom: { name: "Custom size", widthMm: 100, heightMm: 62, paper: "your roll's size" },
 } as const;
 
@@ -128,6 +136,8 @@ export type PrinterSettings = {
   offsetYMm: number;
   /** The badge prints sideways on the roll; flip it if it comes out upside down. */
   flip: boolean;
+  /** On black-and-red rolls (DK-2251), print the logo icon and event mark in red. */
+  red: boolean;
 };
 
 export const DEFAULT_PRINTER: PrinterSettings = {
@@ -137,6 +147,13 @@ export const DEFAULT_PRINTER: PrinterSettings = {
   offsetXMm: 0,
   offsetYMm: 0,
   flip: false,
+  red: true,
+};
+
+/** True when the roll prints red and staff haven't turned red off. */
+export const printsRed = (p: PrinterSettings) => {
+  const preset = LABEL_SIZES[p.label];
+  return Boolean(preset && "twoColor" in preset && preset.twoColor && p.red);
 };
 
 /** The badge's printed size for the chosen roll. */

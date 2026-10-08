@@ -6,7 +6,7 @@
 //   ProPresenter lockup top-left, name centred, organization bottom-left,
 //   event mark bottom-right.
 
-import { labelSizeMm, type PrinterSettings } from "./types";
+import { labelSizeMm, printsRed, type PrinterSettings } from "./types";
 
 export const PRINT_DPI = 300;
 const mmToPx = (mm: number) => Math.round((mm / 25.4) * PRINT_DPI);
@@ -14,6 +14,10 @@ const mmToPx = (mm: number) => Math.round((mm / 25.4) * PRINT_DPI);
 const FONT = '"Plus Jakarta Sans", system-ui, sans-serif';
 const LOGO_SRC = "/brand/propresenter-black.svg";
 const LOGO_ASPECT = 854 / 121;
+/** The icon's share of the lockup's width (the rest is the wordmark). */
+const LOGO_ICON_SHARE = 90 / 854;
+/** The only colour a DK-2251 roll prints besides black. */
+const RED = "#ff0000";
 
 export type LabelContent = { name: string; company: string };
 
@@ -68,7 +72,7 @@ function ellipsize(ctx: Ctx, text: string, maxWidth: number) {
   return `${t.trimEnd()}…`;
 }
 
-function drawEventMark(ctx: Ctx, right: number, bottom: number, u: number): number {
+function drawEventMark(ctx: Ctx, right: number, bottom: number, u: number, color: string): number {
   // "BACKSTAGE / PASS", heavy and tight, with BACKSTAGE stretched to PASS's width.
   const passSize = Math.round(0.21 * u);
   setFont(ctx, 800, passSize, -0.03);
@@ -78,16 +82,40 @@ function drawEventMark(ctx: Ctx, right: number, bottom: number, u: number): numb
   setFont(ctx, 800, topSize, -0.03);
   topSize = Math.round((topSize * passWidth) / ctx.measureText("BACKSTAGE").width);
 
+  ctx.save();
+  ctx.fillStyle = color;
   ctx.textAlign = "right";
   ctx.textBaseline = "alphabetic";
   setFont(ctx, 800, passSize, -0.03);
   ctx.fillText("PASS", right, bottom);
   setFont(ctx, 800, topSize, -0.03);
   ctx.fillText("BACKSTAGE", right, bottom - passSize * 0.84);
+  ctx.restore();
   return passWidth;
 }
 
-function drawBadge(ctx: Ctx, W: number, H: number, u: number, content: LabelContent, logo: HTMLImageElement) {
+/** The lockup with its icon tinted, drawn off-screen so only the icon's own pixels change colour. */
+function tintedLogo(logo: HTMLImageElement, w: number, h: number, color: string): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.ceil(w);
+  c.height = Math.ceil(h);
+  const x = c.getContext("2d")!;
+  x.drawImage(logo, 0, 0, w, h);
+  x.globalCompositeOperation = "source-atop";
+  x.fillStyle = color;
+  x.fillRect(0, 0, w * LOGO_ICON_SHARE, h);
+  return c;
+}
+
+function drawBadge(
+  ctx: Ctx,
+  W: number,
+  H: number,
+  u: number,
+  content: LabelContent,
+  logo: HTMLImageElement,
+  accent: string,
+) {
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = "#000";
@@ -98,10 +126,11 @@ function drawBadge(ctx: Ctx, W: number, H: number, u: number, content: LabelCont
 
   // Lockup
   const logoH = 0.17 * u;
-  ctx.drawImage(logo, mx, top, logoH * LOGO_ASPECT, logoH);
+  if (accent === "#000") ctx.drawImage(logo, mx, top, logoH * LOGO_ASPECT, logoH);
+  else ctx.drawImage(tintedLogo(logo, logoH * LOGO_ASPECT, logoH, accent), mx, top);
 
   // Event mark + organization share the footer line
-  const markWidth = drawEventMark(ctx, W - mx, bottom, u);
+  const markWidth = drawEventMark(ctx, W - mx, bottom, u, accent);
   const companySize = Math.round(0.14 * u);
   setFont(ctx, 600, companySize, -0.01);
   ctx.textAlign = "left";
@@ -161,15 +190,24 @@ export async function renderLabel(content: LabelContent, settings: PrinterSettin
   ctx.fillRect(0, 0, W, H);
   ctx.save();
   ctx.translate(mmToPx(settings.offsetXMm), mmToPx(settings.offsetYMm));
-  drawBadge(ctx, W, H, u, content, logo);
+  const red = printsRed(settings);
+  drawBadge(ctx, W, H, u, content, logo, red ? RED : "#000");
   ctx.restore();
 
+  // Snap every pixel to a colour the roll can print: white, black, and on
+  // DK-2251 pure red. Anything in between would be dithered by the driver.
   const img = ctx.getImageData(0, 0, W, H);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const lum = 0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2];
-    const v = lum < 150 ? 0 : 255;
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const [r, g, b] = [d[i], d[i + 1], d[i + 2]];
+    if (red && r > 120 && r - Math.max(g, b) > 80) {
+      d[i] = 255;
+      d[i + 1] = d[i + 2] = 0;
+    } else {
+      const v = 0.299 * r + 0.587 * g + 0.114 * b < 150 ? 0 : 255;
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    d[i + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
 
